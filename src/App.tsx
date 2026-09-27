@@ -14,7 +14,13 @@ import { PinLockModal } from './components/PinLockModal';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { usePWA } from './hooks/usePWA';
 import { WifiOff, Users } from 'lucide-react';
-import { syncOrderToCloud, fetchSalesFromCloud } from './services/supabase';
+import {
+  syncOrderToCloud,
+  fetchSalesFromCloud,
+  syncMembershipToCloud,
+  fetchMembershipsFromCloud,
+  syncStaffServiceToCloud,
+} from './services/supabase';
 import { getNextOrderNumber, sortOrdersDescending, migrateOrdersToSequential } from './utils/orderUtils';
 import { formatIndianDate } from './utils/dateUtils';
 
@@ -66,23 +72,18 @@ const INITIAL_STAFF_MEMBERS: StaffMember[] = [
 
 const INITIAL_MEMBERSHIPS: MembershipRecord[] = [];
 
-// Clean Slate Purge Routine (Clears old legacy keys on mount)
-const PURGE_FLAG_KEY = 'enreach_clean_slate_production_v2';
+// Clean Slate Purge Routine (Clears local sales storage to guarantee 0% phone memory)
+const PURGE_FLAG_KEY = 'enreach_clean_slate_production_v3';
 function runDataPurgeIfRequired() {
   if (typeof window === 'undefined') return;
   try {
-    const isPurged = safeGetItem(PURGE_FLAG_KEY);
-    if (isPurged !== 'true') {
-      safeRemoveItem('invoices');
-      safeRemoveItem('sales_history');
-      safeRemoveItem('staff_data');
-      safeRemoveItem('backstage_orders');
-      safeRemoveItem('backstage_cloud_orders');
-      safeRemoveItem('backstage_memberships');
-      safeRemoveItem('backstage_staff_performance');
-      safeRemoveItem('enreach_orders_seq_reset_v5');
-      safeSetItem(PURGE_FLAG_KEY, 'true');
-    }
+    // 0% Phone Memory: Wipe all past local sales caches
+    safeRemoveItem('backstage_orders');
+    safeRemoveItem('backstage_cloud_orders');
+    safeRemoveItem('invoices');
+    safeRemoveItem('sales_history');
+    safeRemoveItem('enreach_orders_seq_reset_v5');
+    safeSetItem(PURGE_FLAG_KEY, 'true');
   } catch (e) {
     console.warn('Storage purge notice:', e);
   }
@@ -196,19 +197,50 @@ export default function App() {
     }
   };
 
+  // Cloud Synchronization state
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+
+  // Synchronize all multi-year sales and membership data directly from Supabase Cloud (0% Phone Memory)
+  const loadCloudData = async () => {
+    setIsCloudSyncing(true);
+    try {
+      const [salesRes, memberRes] = await Promise.all([
+        fetchSalesFromCloud(),
+        fetchMembershipsFromCloud(),
+      ]);
+
+      if (salesRes.orders) {
+        const cleansed = salesRes.orders.filter((o) => !['#9166', '#9169', '#9170', 'ORD-7793'].includes(o.id));
+        setOrders(sortOrdersDescending(migrateOrdersToSequential(cleansed)));
+      }
+
+      if (memberRes.memberships && memberRes.memberships.length > 0) {
+        setMemberships(memberRes.memberships);
+      }
+    } catch (err) {
+      console.log('Cloud sync status:', err);
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
   const handlePinSuccess = () => {
     if (pinModalConfig.targetTab === 'history') {
       setIsHistoryUnlocked(true);
       setCurrentTab('history');
+      // Automatically fetch & sync multi-year historical sales data from Supabase upon PIN entry
+      loadCloudData();
     } else if (pinModalConfig.targetTab === 'staff') {
       setIsStaffUnlocked(true);
       setCurrentTab('staff');
+      // Automatically fetch & sync multi-year historical sales data from Supabase upon PIN entry
+      loadCloudData();
     }
     setPinModalConfig((prev) => ({ ...prev, isOpen: false, targetTab: null }));
   };
 
-  // Salon Settings (persisted locally with auto-migration to Enreach, INR, 0% tax, and custom logo)
-  const [settings] = useState<SalonSettings>(() => {
+  // Salon Settings (persisted locally with official salon logo default, INR, and 0% tax)
+  const [settings, setSettings] = useState<SalonSettings>(() => {
     const savedLogo = safeGetItem('enreach_salon_logo') || '';
     try {
       const saved = safeGetItem('backstage_settings');
@@ -220,30 +252,56 @@ export default function App() {
           salonName: 'Enreach Unisex Salon',
           currencySymbol: '₹',
           taxRate: 0,
-          logoUrl: parsed.logoUrl || savedLogo || undefined,
+          logoUrl: parsed.logoUrl || savedLogo || '/salon-logo.png',
         };
       }
-      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || undefined };
+      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || '/salon-logo.png' };
     } catch {
-      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || undefined };
+      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || '/salon-logo.png' };
     }
   });
 
-  // Orders Ledger (100% clean slate, sequential numbering #1, #2... sorted descending)
-  const [orders, setOrders] = useState<Order[]>(() => {
+  // Handler for uploading new official salon logo from device
+  const handleLogoUploaded = (dataUrl: string) => {
+    // 1. Immediately update React state so Header & Receipts render new logo
+    setSettings((prev) => ({ ...prev, logoUrl: dataUrl }));
+
+    // 2. Persist in localStorage
+    safeSetItem('enreach_salon_logo', dataUrl);
     try {
-      const saved = safeGetItem('backstage_orders');
-      if (saved) {
-        const parsed: Order[] = JSON.parse(saved);
-        // Cleanse any legacy mock order IDs if present
-        const cleansed = parsed.filter((o) => !['#9166', '#9169', '#9170', 'ORD-7793'].includes(o.id));
-        return sortOrdersDescending(migrateOrdersToSequential(cleansed));
-      }
-      return [];
+      const saved = safeGetItem('backstage_settings');
+      const parsed = saved ? JSON.parse(saved) : {};
+      safeSetItem('backstage_settings', JSON.stringify({ ...parsed, logoUrl: dataUrl }));
     } catch {
-      return [];
+      // fallback
     }
-  });
+
+    // 3. Dynamically update document favicons and apple-touch-icon in the DOM
+    if (typeof document !== 'undefined') {
+      const iconSelectors = [
+        "link[rel*='icon']",
+        "link[rel='shortcut icon']",
+        "link[rel='apple-touch-icon']",
+      ];
+      iconSelectors.forEach((sel) => {
+        document.querySelectorAll<HTMLLinkElement>(sel).forEach((el) => {
+          el.href = dataUrl;
+        });
+      });
+    }
+
+    // 4. Overwrite physical public/ files on server
+    fetch('/api/upload-logo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64: dataUrl }),
+    }).catch((err) => {
+      console.warn('Logo file sync notice:', err);
+    });
+  };
+
+  // Orders Ledger (0% Phone Memory: strictly held in volatile memory and synced to Supabase Cloud)
+  const [orders, setOrders] = useState<Order[]>([]);
 
   // Active Billing Cart
   const [cartItems, setCartItems] = useState<CartItem[]>(() => {
@@ -275,14 +333,7 @@ export default function App() {
     }
   }, [settings]);
 
-  // Persist orders
-  useEffect(() => {
-    try {
-      safeSetItem('backstage_orders', JSON.stringify(orders));
-    } catch (e) {
-      console.warn('LocalStorage save failed:', e);
-    }
-  }, [orders]);
+  // NOTE: orders are NOT saved to phone LocalStorage to guarantee 0% Phone Memory usage!
 
   // Persist cart
   useEffect(() => {
@@ -311,18 +362,9 @@ export default function App() {
     }
   }, [memberships]);
 
-  // Initial cloud synchronization check
+  // Initial cloud synchronization check on app launch
   useEffect(() => {
-    fetchSalesFromCloud().then((res) => {
-      if (res.fromCloud && res.orders.length > 0) {
-        const cleansed = res.orders.filter((o) => !['#9166', '#9169', '#9170', 'ORD-7793'].includes(o.id));
-        if (cleansed.length > 0) {
-          setOrders(sortOrdersDescending(migrateOrdersToSequential(cleansed)));
-        }
-      }
-    }).catch((err) => {
-      console.log('Local fallback active:', err);
-    });
+    loadCloudData();
   }, []);
 
   // Audio chime for luxury payment completion
@@ -414,21 +456,21 @@ export default function App() {
     setActiveReceiptOrder(orderWithStaff);
 
     // b) Update the selected Staff's personal sales total and history table in the Staff Dashboard
+    const serviceNames = orderWithStaff.items.length > 0
+      ? orderWithStaff.items.map((i) => `${i.service.name}${i.quantity > 1 ? ` (x${i.quantity})` : ''}`).join(', ')
+      : 'Salon Service';
+
+    const newHistoryRecord: StaffServiceRecord = {
+      id: `rec-${Date.now()}`,
+      date: formatIndianDate(new Date()),
+      clientName: orderWithStaff.clientName || 'Walk-in Client',
+      serviceName: serviceNames,
+      amount: orderWithStaff.total,
+    };
+
     setStaffMembers((prev) =>
       prev.map((staff) => {
         if (staff.name === assignedStaff) {
-          const serviceNames = orderWithStaff.items.length > 0
-            ? orderWithStaff.items.map((i) => `${i.service.name}${i.quantity > 1 ? ` (x${i.quantity})` : ''}`).join(', ')
-            : 'Salon Service';
-
-          const newHistoryRecord: StaffServiceRecord = {
-            id: `rec-${Date.now()}`,
-            date: formatIndianDate(new Date()),
-            clientName: orderWithStaff.clientName || 'Walk-in Client',
-            serviceName: serviceNames,
-            amount: orderWithStaff.total,
-          };
-
           return {
             ...staff,
             totalSalesThisMonth: staff.totalSalesThisMonth + orderWithStaff.total,
@@ -446,6 +488,15 @@ export default function App() {
       const startDateStr = formatIndianDate(today);
       const expiryDateStr = formatIndianDate(expiry);
 
+      const newMemberRecord: MembershipRecord = {
+        id: `MEM-${Math.floor(1000 + Math.random() * 9000)}`,
+        clientName: orderWithStaff.clientName || 'Valued Member',
+        clientPhone: orderWithStaff.clientPhone || '+91 98000 00000',
+        startDate: startDateStr,
+        expiryDate: expiryDateStr,
+        isActive: true,
+      };
+
       setMemberships((prev) => {
         const normPhone = (orderWithStaff.clientPhone || '').replace(/\s+/g, '');
         const existingIdx = prev.findIndex(
@@ -461,28 +512,26 @@ export default function App() {
             expiryDate: expiryDateStr,
             isActive: true,
           };
+          syncMembershipToCloud(updated[existingIdx]).catch(() => {});
           return updated;
         } else {
-          const newMember: MembershipRecord = {
-            id: `MEM-${Math.floor(1000 + Math.random() * 9000)}`,
-            clientName: orderWithStaff.clientName || 'Valued Member',
-            clientPhone: orderWithStaff.clientPhone || '+91 98000 00000',
-            startDate: startDateStr,
-            expiryDate: expiryDateStr,
-            isActive: true,
-          };
-          return [newMember, ...prev];
+          syncMembershipToCloud(newMemberRecord).catch(() => {});
+          return [newMemberRecord, ...prev];
         }
       });
     }
 
-    // Asynchronously synchronize to Cloud / LocalStorage fallback
+    // d) Asynchronously persist directly to Supabase Cloud Database (0% Phone LocalStorage Usage)
     syncOrderToCloud(orderWithStaff, {
       name: orderWithStaff.clientName,
       phone: orderWithStaff.clientPhone,
       isMember: Boolean(orderWithStaff.isMember),
     }).catch((err) => {
-      console.warn('Sync notice:', err);
+      console.warn('Supabase sync notice:', err);
+    });
+
+    syncStaffServiceToCloud(assignedStaff, newHistoryRecord).catch((err) => {
+      console.warn('Supabase staff sync notice:', err);
     });
   };
 
@@ -615,6 +664,8 @@ export default function App() {
             currencySymbol={settings.currencySymbol}
             onViewReceipt={(order) => setActiveReceiptOrder(order)}
             onUpdateOrders={setOrders}
+            onRefreshCloud={loadCloudData}
+            isCloudSyncing={isCloudSyncing}
             onLockLedger={() => {
               setIsHistoryUnlocked(false);
               setCurrentTab('services');

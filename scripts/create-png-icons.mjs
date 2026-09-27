@@ -55,14 +55,15 @@ function generateSalonIconPNG(width, height, isMaskable = false) {
       const dx = x - cx;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      // Default dark luxury slate background (#0F172A)
+      // Dark luxury slate background (#0F172A)
       let r = 15;
       let g = 23;
       let b = 42;
       let a = 255;
 
       // Outer gold ring
-      if (Math.abs(dist - outerR) < (width > 200 ? 5 : 2.5)) {
+      const ringWidth = width > 200 ? 5 : (width > 64 ? 2.5 : 1.5);
+      if (Math.abs(dist - outerR) < ringWidth) {
         // Gold (#F59E0B)
         r = 245;
         g = 158;
@@ -74,11 +75,12 @@ function generateSalonIconPNG(width, height, isMaskable = false) {
         b = 9;
       } else if (dist <= innerR) {
         // Center disc
-        // Stylized scissor silhouette in center
         const inCenter = dist < innerR * 0.55;
-        const onDiag1 = Math.abs(dx - dy) < (width > 200 ? 12 : 6) && dist < innerR * 0.65;
-        const onDiag2 = Math.abs(dx + dy) < (width > 200 ? 12 : 6) && dist < innerR * 0.65;
-        const centerPin = dist < (width > 200 ? 14 : 7);
+        const bladeW = width > 200 ? 12 : (width > 64 ? 6 : 2.5);
+        const onDiag1 = Math.abs(dx - dy) < bladeW && dist < innerR * 0.65;
+        const onDiag2 = Math.abs(dx + dy) < bladeW && dist < innerR * 0.65;
+        const pinRadius = width > 200 ? 14 : (width > 64 ? 7 : 3);
+        const centerPin = dist < pinRadius;
 
         if (centerPin) {
           r = 254;
@@ -93,11 +95,13 @@ function generateSalonIconPNG(width, height, isMaskable = false) {
           // Scissor loop indicators
           const loopDist1 = Math.sqrt((dx - innerR * 0.25) ** 2 + (dy - innerR * 0.35) ** 2);
           const loopDist2 = Math.sqrt((dx + innerR * 0.25) ** 2 + (dy - innerR * 0.35) ** 2);
-          if (loopDist1 < (width > 200 ? 22 : 11) && loopDist1 > (width > 200 ? 12 : 6)) {
+          const loopOuter = width > 200 ? 22 : (width > 64 ? 11 : 5);
+          const loopInner = width > 200 ? 12 : (width > 64 ? 6 : 2.5);
+          if (loopDist1 < loopOuter && loopDist1 > loopInner) {
             r = 217;
             g = 119;
             b = 6;
-          } else if (loopDist2 < (width > 200 ? 22 : 11) && loopDist2 > (width > 200 ? 12 : 6)) {
+          } else if (loopDist2 < loopOuter && loopDist2 > loopInner) {
             r = 217;
             g = 119;
             b = 6;
@@ -124,18 +128,21 @@ if (!fs.existsSync(publicDir)) {
   fs.mkdirSync(publicDir, { recursive: true });
 }
 
-// 1. 192x192 PNG
-fs.writeFileSync(path.join(publicDir, 'pwa-192x192.png'), generateSalonIconPNG(192, 192, false));
-console.log('✓ Generated public/pwa-192x192.png');
+const icon192 = generateSalonIconPNG(192, 192, false);
+const icon512 = generateSalonIconPNG(512, 512, false);
+const iconMaskable = generateSalonIconPNG(512, 512, true);
+const icon180 = generateSalonIconPNG(180, 180, false);
+const icon32 = generateSalonIconPNG(32, 32, false);
 
-// 2. 512x512 PNG
-fs.writeFileSync(path.join(publicDir, 'pwa-512x512.png'), generateSalonIconPNG(512, 512, false));
-console.log('✓ Generated public/pwa-512x512.png');
+// 1. PWA & Standard naming
+fs.writeFileSync(path.join(publicDir, 'icon-192.png'), icon192);
+fs.writeFileSync(path.join(publicDir, 'pwa-192x192.png'), icon192);
+fs.writeFileSync(path.join(publicDir, 'icon-512.png'), icon512);
+fs.writeFileSync(path.join(publicDir, 'pwa-512x512.png'), icon512);
+fs.writeFileSync(path.join(publicDir, 'pwa-maskable-512x512.png'), iconMaskable);
+fs.writeFileSync(path.join(publicDir, 'apple-touch-icon.png'), icon180);
+fs.writeFileSync(path.join(publicDir, 'favicon.png'), icon32);
+fs.writeFileSync(path.join(publicDir, 'favicon.ico'), icon32);
+fs.writeFileSync(path.join(publicDir, 'salon-logo.png'), icon512);
 
-// 3. 512x512 Maskable PNG
-fs.writeFileSync(path.join(publicDir, 'pwa-maskable-512x512.png'), generateSalonIconPNG(512, 512, true));
-console.log('✓ Generated public/pwa-maskable-512x512.png');
-
-// 4. 180x180 Apple Touch Icon PNG
-fs.writeFileSync(path.join(publicDir, 'apple-touch-icon.png'), generateSalonIconPNG(180, 180, false));
-console.log('✓ Generated public/apple-touch-icon.png');
+console.log('✓ All PWA icons, favicons, and salon-logo.png generated in public/');

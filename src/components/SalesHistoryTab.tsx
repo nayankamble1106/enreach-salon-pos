@@ -15,6 +15,9 @@ import {
   Sparkles,
   Lock,
   Wallet,
+  Database,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { getWhatsAppReceiptUrl } from '../utils/whatsappReceipt';
 import { sortOrdersDescending } from '../utils/orderUtils';
@@ -24,6 +27,8 @@ import {
   formatIndianDateTime,
   getTimeframeBounds,
 } from '../utils/dateUtils';
+import { SupabaseConfigModal } from './SupabaseConfigModal';
+import { resetCloudOrders, isSupabaseConfigured } from '../services/supabase';
 
 interface SalesHistoryTabProps {
   orders: Order[];
@@ -31,6 +36,8 @@ interface SalesHistoryTabProps {
   onViewReceipt: (order: Order) => void;
   onUpdateOrders: React.Dispatch<React.SetStateAction<Order[]>>;
   onLockLedger?: () => void;
+  onRefreshCloud?: () => Promise<void>;
+  isCloudSyncing?: boolean;
 }
 
 export type SalesTimeframe = 'daily' | 'weekly' | 'monthly' | 'yearly';
@@ -41,9 +48,13 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
   onViewReceipt,
   onUpdateOrders,
   onLockLedger,
+  onRefreshCloud,
+  isCloudSyncing = false,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showConfigModal, setShowConfigModal] = useState(false);
+
 
 
   // Dynamically filter invoices by strict calendar-based timeframe
@@ -215,6 +226,56 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
 
   return (
     <div className="space-y-5">
+      {/* Cloud Database Status & Quick Sync Banner */}
+      <div className="bg-slate-900 text-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+            <Database className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs sm:text-sm font-bold tracking-tight text-white flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${isSupabaseConfigured() ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                {isSupabaseConfigured() ? 'Supabase Cloud Database' : 'Cloud In-Memory Database'}
+              </span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${isSupabaseConfigured() ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-amber-950 text-amber-300 border border-amber-800'}`}>
+                0% Phone Memory
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {isSupabaseConfigured()
+                ? 'Multi-year bills & client records securely synced • Zero phone disk lag'
+                : 'Zero-config preview mode active • All bills, memberships & staff sales work seamlessly in RAM'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          {onRefreshCloud && (
+            <button
+              type="button"
+              onClick={onRefreshCloud}
+              disabled={isCloudSyncing}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 text-xs font-semibold transition-colors border border-slate-700 cursor-pointer disabled:opacity-50"
+              title="Fetch fresh sales from Supabase"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${isCloudSyncing ? 'animate-spin' : ''}`} />
+              <span>{isCloudSyncing ? 'Syncing...' : 'Sync Cloud'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowConfigModal(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
+            title="Configure Supabase project connection"
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>Cloud Config</span>
+          </button>
+        </div>
+      </div>
+
       {/* Header Metric Bar */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
         <div>
@@ -228,9 +289,10 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
             type="button"
-            onClick={() => {
-              if (window.confirm('Reset all sales history transactions? Ledger will be reset to 0 invoices and ₹0 revenue.')) {
+            onClick={async () => {
+              if (window.confirm('Reset all sales history transactions? Ledger will be reset to 0 invoices and ₹0 revenue in both memory and Supabase cloud.')) {
                 onUpdateOrders([]);
+                await resetCloudOrders();
                 try {
                   if (typeof window !== 'undefined') {
                     localStorage.removeItem('backstage_orders');
@@ -640,6 +702,17 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Supabase Cloud Database Configuration Modal */}
+      <SupabaseConfigModal
+        isOpen={showConfigModal}
+        onClose={() => setShowConfigModal(false)}
+        onConfigSaved={() => {
+          if (onRefreshCloud) {
+            onRefreshCloud();
+          }
+        }}
+      />
     </div>
   );
 };

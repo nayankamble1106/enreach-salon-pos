@@ -210,4 +210,5 @@ export const DEFAULT_SETTINGS: SalonSettings = {
   phone: '+91 98200 12345',
   address: 'Shop 14, High Street Avenue, Mumbai',
   gstNumber: '27AAAAA0000A1Z5',
+  logoUrl: '/salon-logo.png',
 };
