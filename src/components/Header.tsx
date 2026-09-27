@@ -32,7 +32,8 @@ export const Header: React.FC<HeaderProps> = ({
             <img
               src="/salon-logo.png"
               alt="Salon Logo"
-              className="w-10 h-10 object-contain rounded-full"
+              className="w-10 h-10 object-contain rounded-full shadow-xs"
+              referrerPolicy="no-referrer"
             />
           </div>
 
