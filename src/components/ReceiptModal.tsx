@@ -41,17 +41,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose, sett
 
         {/* Brand & Receipt Header */}
         <div className="text-center pb-4 border-b border-dashed border-slate-200">
-          {settings.logoUrl ? (
-            <img
-              src={settings.logoUrl}
-              alt={settings.salonName}
-              className="w-12 h-12 rounded-xl object-cover mx-auto mb-2 border border-slate-200 shadow-xs"
-            />
-          ) : (
-            <div className="w-10 h-10 rounded-xl bg-amber-700 mx-auto flex items-center justify-center text-white mb-2 shadow-sm">
-              <Sparkles className="w-5 h-5 text-amber-200" />
-            </div>
-          )}
+          <img
+            src={settings.logoUrl || '/salon-logo.png'}
+            alt={settings.salonName}
+            className="w-12 h-12 rounded-xl object-contain mx-auto mb-2 border border-slate-200 shadow-xs bg-white"
+          />
           <h3 className="font-bold text-lg text-slate-900">{settings.salonName}</h3>
           <p className="text-xs text-slate-500 mt-0.5">{settings.address || 'Chandrapur • Hair • Skin • Grooming'}</p>
           <p className="text-[11px] text-slate-400">Owner Contact: {SALON_OWNER_NUMBER}</p>

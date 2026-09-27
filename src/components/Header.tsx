@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingBag, Sparkles, Download } from 'lucide-react';
+import { ShoppingBag, Download } from 'lucide-react';
 import { TabType } from '../types';
 
 interface HeaderProps {
@@ -19,30 +19,21 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCart,
   currentTab,
   currencySymbol,
-  logoUrl,
   isInstallable,
   onInstall,
 }) => {
   return (
     <header className="bg-white border-b border-slate-200/80 sticky top-0 z-40 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand identity with static prominent salon logo */}
-        <div className="flex items-center gap-3.5">
+        {/* Brand identity with official salon emblem logo */}
+        <div className="flex items-center gap-3">
           {/* Salon Logo */}
           <div className="relative select-none flex-shrink-0">
-            {logoUrl ? (
-              <div className="w-12 h-12 rounded-xl overflow-hidden shadow-xs ring-1 ring-amber-600/30 border border-slate-200 bg-white">
-                <img
-                  src={logoUrl}
-                  alt="Enreach Unisex Salon Logo"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            ) : (
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-700 via-amber-800 to-amber-950 border border-amber-600/40 flex items-center justify-center text-amber-100 shadow-xs">
-                <Sparkles className="w-5 h-5 text-amber-200" />
-              </div>
-            )}
+            <img
+              src="/salon-logo.png"
+              alt="Salon Logo"
+              className="w-10 h-10 object-contain rounded-full"
+            />
           </div>
 
           <div>

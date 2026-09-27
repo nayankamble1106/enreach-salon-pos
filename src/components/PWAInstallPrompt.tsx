@@ -30,9 +30,11 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
         <div className="fixed bottom-18 md:bottom-5 left-4 right-4 md:left-auto md:right-5 md:max-w-md z-40 bg-slate-900 text-white p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-amber-500/40 animate-in fade-in slide-in-from-bottom-3 duration-300">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-600 to-amber-900 flex items-center justify-center text-amber-100 flex-shrink-0 shadow-xs border border-amber-400/30">
-                <Sparkles className="w-5 h-5 text-amber-200" />
-              </div>
+              <img
+                src="/salon-logo.png"
+                alt="Enreach Salon"
+                className="w-10 h-10 rounded-xl object-contain bg-white shadow-xs border border-amber-400/30 flex-shrink-0"
+              />
               <div>
                 <h4 className="text-xs sm:text-sm font-bold text-white leading-tight">
                   Install Enreach Unisex Salon App
