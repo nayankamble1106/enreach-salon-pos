@@ -1,0 +1,6 @@
+{
+  "name": "Enreach Unisex Salon - POS & Staff Performance",
+  "description": "Point of sale, billing, sales history, and staff performance management dashboard for Enreach Unisex Salon.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
