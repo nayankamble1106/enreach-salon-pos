@@ -19,21 +19,22 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCart,
   currentTab,
   currencySymbol,
+  logoUrl,
   isInstallable,
   onInstall,
 }) => {
+  const displayLogo = logoUrl || '/salon-logo.png';
+
   return (
     <header className="bg-white border-b border-slate-200/80 sticky top-0 z-40 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand identity with official salon emblem logo */}
+        {/* Brand identity with locked-in official salon emblem logo */}
         <div className="flex items-center gap-3">
-          {/* Salon Logo */}
-          <div className="relative select-none flex-shrink-0">
+          <div className="relative select-none shrink-0">
             <img
-              src="/salon-logo.png"
+              src="/salon-logo.jpg"
               alt="Salon Logo"
-              className="w-10 h-10 object-contain rounded-full shadow-xs"
-              referrerPolicy="no-referrer"
+              className="w-10 h-10 object-contain rounded-full"
             />
           </div>
 
@@ -46,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({
                 POS
               </span>
             </div>
-            <p className="text-xs text-slate-500 font-normal mt-0.5 hidden xs:block">
+            <p className="text-xs text-slate-500 font-normal hidden xs:block mt-0.5">
               Luxury Studio &amp; Billing Terminal
             </p>
           </div>

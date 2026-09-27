@@ -31,9 +31,9 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
               <img
-                src="/salon-logo.png"
+                src="/salon-logo.jpg"
                 alt="Enreach Salon"
-                className="w-10 h-10 rounded-xl object-contain bg-white shadow-xs border border-amber-400/30 flex-shrink-0"
+                className="w-10 h-10 rounded-xl object-contain bg-white shadow-xs border border-amber-400/30 shrink-0"
               />
               <div>
                 <h4 className="text-xs sm:text-sm font-bold text-white leading-tight">

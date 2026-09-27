@@ -252,12 +252,12 @@ export default function App() {
           salonName: 'Enreach Unisex Salon',
           currencySymbol: '₹',
           taxRate: 0,
-          logoUrl: parsed.logoUrl || savedLogo || '/salon-logo.png',
+          logoUrl: parsed.logoUrl || savedLogo || '/salon-logo.jpg',
         };
       }
-      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || '/salon-logo.png' };
+      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || '/salon-logo.jpg' };
     } catch {
-      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || '/salon-logo.png' };
+      return { ...DEFAULT_SETTINGS, taxRate: 0, logoUrl: savedLogo || '/salon-logo.jpg' };
     }
   });
 
@@ -288,6 +288,11 @@ export default function App() {
           el.href = dataUrl;
         });
       });
+
+      const manifestTag = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
+      if (manifestTag) {
+        manifestTag.href = `/manifest.json?v=${Date.now()}`;
+      }
     }
 
     // 4. Overwrite physical public/ files on server
@@ -295,6 +300,14 @@ export default function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imageBase64: dataUrl }),
+    }).then(() => {
+      if ('caches' in window) {
+        caches.open('enreach-salon-pos-v1').then((cache) => {
+          fetch('/salon-logo.png?v=' + Date.now()).then((res) => {
+            if (res.ok) cache.put('/salon-logo.png', res);
+          }).catch(() => {});
+        }).catch(() => {});
+      }
     }).catch((err) => {
       console.warn('Logo file sync notice:', err);
     });

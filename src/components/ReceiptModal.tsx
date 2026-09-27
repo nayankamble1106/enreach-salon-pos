@@ -42,7 +42,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose, sett
         {/* Brand & Receipt Header */}
         <div className="text-center pb-4 border-b border-dashed border-slate-200">
           <img
-            src={settings.logoUrl || '/salon-logo.png'}
+            src={settings.logoUrl || '/salon-logo.jpg'}
             alt={settings.salonName}
             className="w-12 h-12 rounded-xl object-contain mx-auto mb-2 border border-slate-200 shadow-xs bg-white"
           />

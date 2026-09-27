@@ -26,7 +26,7 @@ function logoUploadPlugin(): Plugin {
                   fs.mkdirSync(publicDir, { recursive: true });
                 }
 
-                fs.writeFileSync(path.join(publicDir, 'salon-logo.png'), buffer);
+                fs.writeFileSync(path.join(publicDir, 'salon-logo.jpg'), buffer);
                 fs.writeFileSync(path.join(publicDir, 'icon-512.png'), buffer);
                 fs.writeFileSync(path.join(publicDir, 'pwa-512x512.png'), buffer);
                 fs.writeFileSync(path.join(publicDir, 'pwa-maskable-512x512.png'), buffer);
@@ -40,6 +40,20 @@ function logoUploadPlugin(): Plugin {
   <image href="data:image/png;base64,${base64Clean}" width="512" height="512" />
 </svg>`;
                 fs.writeFileSync(path.join(publicDir, 'icon.svg'), svg);
+
+                const distDir = path.resolve('dist');
+                if (fs.existsSync(distDir)) {
+                  fs.writeFileSync(path.join(distDir, 'salon-logo.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'icon-512.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'pwa-512x512.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'pwa-maskable-512x512.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'icon-192.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'pwa-192x192.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'apple-touch-icon.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'favicon.png'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'favicon.ico'), buffer);
+                  fs.writeFileSync(path.join(distDir, 'icon.svg'), svg);
+                }
               }
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true }));
