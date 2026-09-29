@@ -72,3 +72,27 @@ export interface StaffMember {
   totalSalesThisMonth: number;
   history: StaffServiceRecord[];
 }
+
+export interface SalonFirebaseBridge {
+  app?: unknown;
+  db?: any;
+  isInitialized: boolean;
+  toFirebaseKey: (key: string) => string;
+  syncOrder: (order: Order) => Promise<unknown>;
+  syncMembership: (member: MembershipRecord) => Promise<unknown>;
+  syncStaffMembers: (staffList: StaffMember[]) => Promise<unknown>;
+  syncStaffServiceRecord: (staffName: string, record: StaffServiceRecord) => Promise<unknown>;
+  getOrders: () => Order[];
+  getMemberships: () => MembershipRecord[];
+  getStaff: () => StaffMember[];
+  resetOrders?: () => Promise<unknown>;
+}
+
+declare global {
+  interface Window {
+    salonFirebase?: SalonFirebaseBridge;
+    __salonLastFirebaseOrders?: Order[];
+    __salonLastFirebaseMembers?: MembershipRecord[];
+    __salonLastFirebaseStaff?: StaffMember[];
+  }
+}

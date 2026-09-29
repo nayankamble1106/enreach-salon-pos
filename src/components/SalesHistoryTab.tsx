@@ -293,6 +293,9 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
               if (window.confirm('Reset all sales history transactions? Ledger will be reset to 0 invoices and ₹0 revenue in both memory and Supabase cloud.')) {
                 onUpdateOrders([]);
                 await resetCloudOrders();
+                if (typeof window !== 'undefined' && window.salonFirebase?.resetOrders) {
+                  await window.salonFirebase.resetOrders();
+                }
                 try {
                   if (typeof window !== 'undefined') {
                     localStorage.removeItem('backstage_orders');

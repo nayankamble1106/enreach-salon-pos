@@ -72,26 +72,6 @@ const INITIAL_STAFF_MEMBERS: StaffMember[] = [
 
 const INITIAL_MEMBERSHIPS: MembershipRecord[] = [];
 
-// Clean Slate Purge Routine (Clears local sales storage to guarantee 0% phone memory)
-const PURGE_FLAG_KEY = 'enreach_clean_slate_production_v3';
-function runDataPurgeIfRequired() {
-  if (typeof window === 'undefined') return;
-  try {
-    // 0% Phone Memory: Wipe all past local sales caches
-    safeRemoveItem('backstage_orders');
-    safeRemoveItem('backstage_cloud_orders');
-    safeRemoveItem('invoices');
-    safeRemoveItem('sales_history');
-    safeRemoveItem('enreach_orders_seq_reset_v5');
-    safeSetItem(PURGE_FLAG_KEY, 'true');
-  } catch (e) {
-    console.warn('Storage purge notice:', e);
-  }
-}
-
-// Run purge immediately before state initializers
-runDataPurgeIfRequired();
-
 export default function App() {
   const {
     isOnline,
@@ -200,22 +180,55 @@ export default function App() {
   // Cloud Synchronization state
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
 
-  // Synchronize all multi-year sales and membership data directly from Supabase Cloud (0% Phone Memory)
+  // Synchronize multi-year sales, memberships, and staff data across Firebase Realtime DB and cloud mirrors
   const loadCloudData = async () => {
     setIsCloudSyncing(true);
     try {
+      // 1. Instantly pull from Firebase Realtime DB if available
+      if (typeof window !== 'undefined' && window.salonFirebase) {
+        const fbOrders = window.salonFirebase.getOrders();
+        if (fbOrders.length > 0) {
+          setOrders(sortOrdersDescending(migrateOrdersToSequential(fbOrders)));
+        }
+        const fbMembers = window.salonFirebase.getMemberships();
+        if (fbMembers.length > 0) {
+          setMemberships(fbMembers);
+        }
+        const fbStaff = window.salonFirebase.getStaff();
+        if (fbStaff.length > 0) {
+          setStaffMembers(fbStaff);
+        }
+      }
+
+      // 2. Fetch from cloud storage mirror
       const [salesRes, memberRes] = await Promise.all([
         fetchSalesFromCloud(),
         fetchMembershipsFromCloud(),
       ]);
 
-      if (salesRes.orders) {
+      if (salesRes.orders && salesRes.orders.length > 0) {
         const cleansed = salesRes.orders.filter((o) => !['#9166', '#9169', '#9170', 'ORD-7793'].includes(o.id));
-        setOrders(sortOrdersDescending(migrateOrdersToSequential(cleansed)));
+        setOrders((prev) => {
+          const merged = [...prev];
+          cleansed.forEach((co) => {
+            if (!merged.some((m) => m.id === co.id)) {
+              merged.push(co);
+            }
+          });
+          return sortOrdersDescending(migrateOrdersToSequential(merged));
+        });
       }
 
       if (memberRes.memberships && memberRes.memberships.length > 0) {
-        setMemberships(memberRes.memberships);
+        setMemberships((prev) => {
+          const merged = [...prev];
+          memberRes.memberships.forEach((cm) => {
+            if (!merged.some((m) => m.id === cm.id || m.clientPhone === cm.clientPhone)) {
+              merged.push(cm);
+            }
+          });
+          return merged;
+        });
       }
     } catch (err) {
       console.log('Cloud sync status:', err);
@@ -313,8 +326,27 @@ export default function App() {
     });
   };
 
-  // Orders Ledger (0% Phone Memory: strictly held in volatile memory and synced to Supabase Cloud)
-  const [orders, setOrders] = useState<Order[]>([]);
+  // Orders Ledger: initialized from Firebase cache or local storage, synced in real-time
+  const [orders, setOrders] = useState<Order[]>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.__salonLastFirebaseOrders && window.__salonLastFirebaseOrders.length > 0) {
+        return sortOrdersDescending(window.__salonLastFirebaseOrders);
+      }
+      const candidateKeys = ['backstage_orders', 'sales_history', 'invoices', 'backstage_cloud_orders'];
+      for (const key of candidateKeys) {
+        const saved = safeGetItem(key);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return sortOrdersDescending(parsed);
+          }
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return [];
+  });
 
   // Active Billing Cart
   const [cartItems, setCartItems] = useState<CartItem[]>(() => {
@@ -332,9 +364,49 @@ export default function App() {
   // Active Receipt Modal
   const [activeReceiptOrder, setActiveReceiptOrder] = useState<Order | null>(null);
 
-  // Clear legacy keys on mount
+  // Multi-Device Real-time Firebase Synchronization Listeners
   useEffect(() => {
-    runDataPurgeIfRequired();
+    // 1. Initial check if Firebase already loaded data
+    if (typeof window !== 'undefined') {
+      if (window.__salonLastFirebaseOrders && window.__salonLastFirebaseOrders.length > 0) {
+        setOrders(sortOrdersDescending(window.__salonLastFirebaseOrders));
+      }
+      if (window.__salonLastFirebaseMembers && window.__salonLastFirebaseMembers.length > 0) {
+        setMemberships(window.__salonLastFirebaseMembers);
+      }
+      if (window.__salonLastFirebaseStaff && window.__salonLastFirebaseStaff.length > 0) {
+        setStaffMembers(window.__salonLastFirebaseStaff);
+      }
+    }
+
+    // 2. Real-time Firebase listeners via custom events
+    const handleFirebaseOrders = (e: CustomEvent<Order[]>) => {
+      if (Array.isArray(e.detail) && e.detail.length > 0) {
+        setOrders(sortOrdersDescending(migrateOrdersToSequential(e.detail)));
+      }
+    };
+
+    const handleFirebaseMembers = (e: CustomEvent<MembershipRecord[]>) => {
+      if (Array.isArray(e.detail) && e.detail.length > 0) {
+        setMemberships(e.detail);
+      }
+    };
+
+    const handleFirebaseStaff = (e: CustomEvent<StaffMember[]>) => {
+      if (Array.isArray(e.detail) && e.detail.length > 0) {
+        setStaffMembers(e.detail);
+      }
+    };
+
+    window.addEventListener('salon:firebase-orders-updated', handleFirebaseOrders as EventListener);
+    window.addEventListener('salon:firebase-memberships-updated', handleFirebaseMembers as EventListener);
+    window.addEventListener('salon:firebase-staff-updated', handleFirebaseStaff as EventListener);
+
+    return () => {
+      window.removeEventListener('salon:firebase-orders-updated', handleFirebaseOrders as EventListener);
+      window.removeEventListener('salon:firebase-memberships-updated', handleFirebaseMembers as EventListener);
+      window.removeEventListener('salon:firebase-staff-updated', handleFirebaseStaff as EventListener);
+    };
   }, []);
 
   // Persist settings
@@ -346,7 +418,16 @@ export default function App() {
     }
   }, [settings]);
 
-  // NOTE: orders are NOT saved to phone LocalStorage to guarantee 0% Phone Memory usage!
+  // Persist orders locally so local data safety is strictly guaranteed
+  useEffect(() => {
+    if (orders.length > 0) {
+      try {
+        safeSetItem('backstage_orders', JSON.stringify(orders));
+      } catch (e) {
+        console.warn('LocalStorage save failed:', e);
+      }
+    }
+  }, [orders]);
 
   // Persist cart
   useEffect(() => {
@@ -481,20 +562,27 @@ export default function App() {
       amount: orderWithStaff.total,
     };
 
-    setStaffMembers((prev) =>
-      prev.map((staff) => {
-        if (staff.name === assignedStaff) {
-          return {
-            ...staff,
-            totalSalesThisMonth: staff.totalSalesThisMonth + orderWithStaff.total,
-            history: [newHistoryRecord, ...staff.history],
-          };
-        }
-        return staff;
-      })
-    );
+    const updatedStaff = staffMembers.map((staff) => {
+      if (staff.name === assignedStaff) {
+        return {
+          ...staff,
+          totalSalesThisMonth: staff.totalSalesThisMonth + orderWithStaff.total,
+          history: [newHistoryRecord, ...staff.history],
+        };
+      }
+      return staff;
+    });
 
-    // c) If client is an Enreach Member (button was ON during checkout), automatically activate/renew 1-Year (365 Days) membership
+    setStaffMembers(updatedStaff);
+
+    // c) Multi-Device Real-time Sync via Firebase Realtime Database
+    if (typeof window !== 'undefined' && window.salonFirebase) {
+      window.salonFirebase.syncOrder(orderWithStaff);
+      window.salonFirebase.syncStaffMembers(updatedStaff);
+      window.salonFirebase.syncStaffServiceRecord(assignedStaff, newHistoryRecord);
+    }
+
+    // d) If client is an Enreach Member (button was ON during checkout), automatically activate/renew 1-Year (365 Days) membership
     if (orderWithStaff.isMember) {
       const today = new Date();
       const expiry = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
@@ -526,25 +614,31 @@ export default function App() {
             isActive: true,
           };
           syncMembershipToCloud(updated[existingIdx]).catch(() => {});
+          if (typeof window !== 'undefined' && window.salonFirebase) {
+            window.salonFirebase.syncMembership(updated[existingIdx]);
+          }
           return updated;
         } else {
           syncMembershipToCloud(newMemberRecord).catch(() => {});
+          if (typeof window !== 'undefined' && window.salonFirebase) {
+            window.salonFirebase.syncMembership(newMemberRecord);
+          }
           return [newMemberRecord, ...prev];
         }
       });
     }
 
-    // d) Asynchronously persist directly to Supabase Cloud Database (0% Phone LocalStorage Usage)
+    // e) Asynchronously persist to cloud mirror
     syncOrderToCloud(orderWithStaff, {
       name: orderWithStaff.clientName,
       phone: orderWithStaff.clientPhone,
       isMember: Boolean(orderWithStaff.isMember),
     }).catch((err) => {
-      console.warn('Supabase sync notice:', err);
+      console.warn('Cloud sync notice:', err);
     });
 
     syncStaffServiceToCloud(assignedStaff, newHistoryRecord).catch((err) => {
-      console.warn('Supabase staff sync notice:', err);
+      console.warn('Staff sync notice:', err);
     });
   };
 

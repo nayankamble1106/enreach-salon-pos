@@ -23,7 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
   isInstallable,
   onInstall,
 }) => {
-  const displayLogo = logoUrl || '/salon-logo.png';
+  const displayLogo = logoUrl || '/salon-logo.jpg';
 
   return (
     <header className="bg-white border-b border-slate-200/80 sticky top-0 z-40 shadow-xs">
@@ -43,8 +43,9 @@ export const Header: React.FC<HeaderProps> = ({
               <h1 className="font-bold text-lg sm:text-xl tracking-tight text-slate-900 leading-none">
                 Enreach Unisex Salon
               </h1>
-              <span className="hidden sm:inline-block text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
-                POS
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Live Sync</span>
               </span>
             </div>
             <p className="text-xs text-slate-500 font-normal hidden xs:block mt-0.5">

@@ -22,7 +22,7 @@
     <meta name="apple-mobile-web-app-title" content="Enreach Salon" />
     <meta name="application-name" content="Enreach Unisex Salon" />
 
-    <!-- Official Salon Favicons (replaces default Vercel 'V' favicon with official emblem) -->
+    <!-- Official Salon Favicons & App Icons (points directly to /salon-logo.jpg) -->
     <link rel="icon" type="image/jpeg" href="/salon-logo.jpg" />
     <link rel="shortcut icon" href="/salon-logo.jpg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
@@ -30,10 +30,398 @@
     <link rel="icon" type="image/jpeg" sizes="512x512" href="/salon-logo.jpg" />
     <link rel="apple-touch-icon" href="/salon-logo.jpg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <!-- Firebase Realtime Database CDN (Compat v10) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
   </head>
   <body class="bg-[#F8F9FA] text-[#0F172A] antialiased select-none overscroll-none">
     <div id="root"></div>
+
+    <!-- Firebase Realtime Database Real-time Sync & Auto-Migration Engine -->
+    <script>
+      (function() {
+        // 1. Firebase App Configuration
+        const firebaseConfig = {
+          apiKey: "AIzaSyBjTY6_nZuJiATOkcSJDtlwQVpjO54-QRE",
+          authDomain: "enrichsalonpos.firebaseapp.com",
+          databaseURL: "https://enrichsalonpos-default-rtdb.firebaseio.com",
+          projectId: "enrichsalonpos",
+          storageBucket: "enrichsalonpos.firebasestorage.app",
+          messagingSenderId: "1053074205412",
+          appId: "1:1053074205412:web:75be1f395ca03e92a19af1"
+        };
+
+        // Initialize Firebase
+        let app = null;
+        let db = null;
+        try {
+          if (window.firebase) {
+            if (!window.firebase.apps.length) {
+              app = window.firebase.initializeApp(firebaseConfig);
+            } else {
+              app = window.firebase.app();
+            }
+            db = window.firebase.database();
+            console.log('Firebase Realtime Database initialized:', firebaseConfig.databaseURL);
+          } else {
+            console.warn('Firebase SDK scripts not loaded yet');
+          }
+        } catch (err) {
+          console.error('Firebase initialization error:', err);
+        }
+
+        // Sanitization helper for RTDB keys (keys cannot contain: . # $ [ ] /)
+        function toFirebaseKey(key) {
+          if (!key) return 'item_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+          return String(key).replace(/[.#$[\]/]/g, function(c) {
+            return '_' + c.charCodeAt(0).toString(16) + '_';
+          });
+        }
+
+        // Real-time local mirrors
+        window.__salonLastFirebaseOrders = [];
+        window.__salonLastFirebaseMembers = [];
+        window.__salonLastFirebaseStaff = [];
+
+        // Global Salon Firebase Sync Bridge
+        window.salonFirebase = {
+          app: app,
+          db: db,
+          isInitialized: Boolean(db),
+          toFirebaseKey: toFirebaseKey,
+
+          // Push an order to Firebase
+          syncOrder: function(order) {
+            if (!db || !order || !order.id) return Promise.resolve();
+            const key = toFirebaseKey(order.id);
+            return db.ref('orders/' + key).set(order).then(function() {
+              console.log('Order synced to Firebase Realtime DB:', order.id);
+            }).catch(function(err) {
+              console.warn('Firebase order sync error:', err);
+            });
+          },
+
+          // Push a membership to Firebase
+          syncMembership: function(member) {
+            if (!db || !member) return Promise.resolve();
+            const key = toFirebaseKey(member.id || member.clientPhone);
+            return db.ref('memberships/' + key).set(member).then(function() {
+              console.log('Membership synced to Firebase:', member.clientName);
+            }).catch(function(err) {
+              console.warn('Firebase membership sync error:', err);
+            });
+          },
+
+          // Push staff members list to Firebase
+          syncStaffMembers: function(staffList) {
+            if (!db || !Array.isArray(staffList)) return Promise.resolve();
+            const updates = {};
+            staffList.forEach(function(s) {
+              if (s && (s.id || s.name)) {
+                const key = toFirebaseKey(s.id || s.name);
+                updates['staff_members/' + key] = s;
+              }
+            });
+            return db.ref().update(updates).catch(function(err) {
+              console.warn('Firebase staff sync error:', err);
+            });
+          },
+
+          // Push a staff service record
+          syncStaffServiceRecord: function(staffName, record) {
+            if (!db || !staffName || !record) return Promise.resolve();
+            const key = toFirebaseKey(record.id);
+            return db.ref('staff_services/' + key).set({
+              staffName: staffName,
+              record: record,
+              timestamp: Date.now()
+            }).catch(function(err) {
+              console.warn('Firebase staff service sync error:', err);
+            });
+          },
+
+          // Reset orders if requested
+          resetOrders: function() {
+            if (!db) return Promise.resolve();
+            return db.ref('orders').remove().catch(function(err) {
+              console.warn('Firebase resetOrders error:', err);
+            });
+          },
+
+          getOrders: function() {
+            return window.__salonLastFirebaseOrders || [];
+          },
+          getMemberships: function() {
+            return window.__salonLastFirebaseMembers || [];
+          },
+          getStaff: function() {
+            return window.__salonLastFirebaseStaff || [];
+          }
+        };
+
+        if (!db) return;
+
+        // 2. Multi-Device Real-time Sync Listeners
+        const ordersRef = db.ref('orders');
+        const membersRef = db.ref('memberships');
+        const staffRef = db.ref('staff_members');
+
+        // Order updates from any connected device
+        ordersRef.on('value', function(snapshot) {
+          const val = snapshot.val();
+          const list = [];
+          if (val) {
+            Object.keys(val).forEach(function(k) {
+              if (val[k]) list.push(val[k]);
+            });
+          }
+          window.__salonLastFirebaseOrders = list;
+          window.dispatchEvent(new CustomEvent('salon:firebase-orders-updated', { detail: list }));
+
+          // Safely backup to local storage so local data safety is preserved
+          if (list.length > 0) {
+            try {
+              localStorage.setItem('backstage_orders', JSON.stringify(list));
+            } catch (e) {}
+          }
+        }, function(err) {
+          console.warn('Firebase orders subscription error:', err);
+        });
+
+        // Membership updates from any connected device
+        membersRef.on('value', function(snapshot) {
+          const val = snapshot.val();
+          const list = [];
+          if (val) {
+            Object.keys(val).forEach(function(k) {
+              if (val[k]) list.push(val[k]);
+            });
+          }
+          window.__salonLastFirebaseMembers = list;
+          window.dispatchEvent(new CustomEvent('salon:firebase-memberships-updated', { detail: list }));
+
+          if (list.length > 0) {
+            try {
+              localStorage.setItem('backstage_memberships', JSON.stringify(list));
+            } catch (e) {}
+          }
+        }, function(err) {
+          console.warn('Firebase memberships subscription error:', err);
+        });
+
+        // Staff updates from any connected device
+        staffRef.on('value', function(snapshot) {
+          const val = snapshot.val();
+          const list = [];
+          if (val) {
+            Object.keys(val).forEach(function(k) {
+              if (val[k]) list.push(val[k]);
+            });
+          }
+          window.__salonLastFirebaseStaff = list;
+          window.dispatchEvent(new CustomEvent('salon:firebase-staff-updated', { detail: list }));
+
+          if (list.length > 0) {
+            try {
+              localStorage.setItem('backstage_staff_performance', JSON.stringify(list));
+            } catch (e) {}
+          }
+        }, function(err) {
+          console.warn('Firebase staff subscription error:', err);
+        });
+
+        // Track live connection state
+        db.ref('.info/connected').on('value', function(snap) {
+          const connected = Boolean(snap.val());
+          window.dispatchEvent(new CustomEvent('salon:firebase-connection', { detail: { connected: connected } }));
+        });
+
+        // 3. Auto-Migration & Data Safety Routine
+        // Inspects localStorage & IndexedDB. Pushes unsynced sales, members, and totals to Firebase WITHOUT deleting local data.
+        function runAutoMigration() {
+          // A. Orders Migration
+          try {
+            const candidateKeys = [
+              'backstage_orders',
+              'sales_history',
+              'invoices',
+              'backstage_cloud_orders',
+              'enreach_orders_seq_reset_v5'
+            ];
+            const allLocalOrders = [];
+            const seenOrderIds = new Set();
+
+            candidateKeys.forEach(function(key) {
+              try {
+                const raw = localStorage.getItem(key);
+                if (raw) {
+                  const parsed = JSON.parse(raw);
+                  if (Array.isArray(parsed)) {
+                    parsed.forEach(function(ord) {
+                      if (ord && ord.id && !seenOrderIds.has(ord.id)) {
+                        seenOrderIds.add(ord.id);
+                        allLocalOrders.push(ord);
+                      }
+                    });
+                  }
+                }
+              } catch (e) {}
+            });
+
+            if (allLocalOrders.length > 0) {
+              ordersRef.once('value').then(function(snapshot) {
+                const existing = snapshot.val() || {};
+                const existingKeys = new Set(Object.keys(existing));
+                const updates = {};
+                let count = 0;
+
+                allLocalOrders.forEach(function(ord) {
+                  const k = toFirebaseKey(ord.id);
+                  if (!existingKeys.has(k)) {
+                    updates[k] = ord;
+                    count++;
+                  }
+                });
+
+                if (count > 0) {
+                  ordersRef.update(updates).then(function() {
+                    console.log('Firebase Auto-Migration: Migrated ' + count + ' local orders to cloud.');
+                  });
+                }
+              }).catch(function(e) {
+                console.warn('Auto-migration orders lookup error:', e);
+              });
+            }
+          } catch (e) {
+            console.warn('Order migration error:', e);
+          }
+
+          // B. Memberships Migration
+          try {
+            const rawMembers = localStorage.getItem('backstage_memberships');
+            if (rawMembers) {
+              const parsedMembers = JSON.parse(rawMembers);
+              if (Array.isArray(parsedMembers) && parsedMembers.length > 0) {
+                membersRef.once('value').then(function(snapshot) {
+                  const existing = snapshot.val() || {};
+                  const existingKeys = new Set(Object.keys(existing));
+                  const updates = {};
+                  let count = 0;
+
+                  parsedMembers.forEach(function(m) {
+                    if (m && (m.id || m.clientPhone)) {
+                      const k = toFirebaseKey(m.id || m.clientPhone);
+                      if (!existingKeys.has(k)) {
+                        updates[k] = m;
+                        count++;
+                      }
+                    }
+                  });
+
+                  if (count > 0) {
+                    membersRef.update(updates).then(function() {
+                      console.log('Firebase Auto-Migration: Migrated ' + count + ' local memberships to cloud.');
+                    });
+                  }
+                }).catch(function(e) {
+                  console.warn('Auto-migration members lookup error:', e);
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('Memberships migration error:', e);
+          }
+
+          // C. Staff Performance Migration
+          try {
+            const rawStaff = localStorage.getItem('backstage_staff_performance');
+            if (rawStaff) {
+              const parsedStaff = JSON.parse(rawStaff);
+              if (Array.isArray(parsedStaff) && parsedStaff.length > 0) {
+                staffRef.once('value').then(function(snapshot) {
+                  const existing = snapshot.val() || {};
+                  const existingKeys = new Set(Object.keys(existing));
+                  const updates = {};
+                  let count = 0;
+
+                  parsedStaff.forEach(function(s) {
+                    if (s && (s.id || s.name)) {
+                      const k = toFirebaseKey(s.id || s.name);
+                      if (!existingKeys.has(k)) {
+                        updates[k] = s;
+                        count++;
+                      }
+                    }
+                  });
+
+                  if (count > 0) {
+                    staffRef.update(updates).then(function() {
+                      console.log('Firebase Auto-Migration: Migrated ' + count + ' staff records to cloud.');
+                    });
+                  }
+                }).catch(function(e) {
+                  console.warn('Auto-migration staff lookup error:', e);
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('Staff migration error:', e);
+          }
+
+          // D. IndexedDB Scan (Non-destructive check)
+          try {
+            if (window.indexedDB && window.indexedDB.databases) {
+              window.indexedDB.databases().then(function(dbs) {
+                if (Array.isArray(dbs)) {
+                  dbs.forEach(function(dbInfo) {
+                    if (!dbInfo.name) return;
+                    try {
+                      const req = window.indexedDB.open(dbInfo.name);
+                      req.onsuccess = function(ev) {
+                        const idb = ev.target.result;
+                        const storeNames = Array.from(idb.objectStoreNames || []);
+                        storeNames.forEach(function(storeName) {
+                          try {
+                            const tx = idb.transaction(storeName, 'readonly');
+                            const store = tx.objectStore(storeName);
+                            const getReq = store.getAll();
+                            getReq.onsuccess = function() {
+                              const items = getReq.result;
+                              if (Array.isArray(items)) {
+                                items.forEach(function(item) {
+                                  if (item && item.id && item.total !== undefined && item.paymentMethod) {
+                                    const k = toFirebaseKey(item.id);
+                                    ordersRef.child(k).transaction(function(curr) {
+                                      return curr || item;
+                                    });
+                                  } else if (item && item.startDate && item.expiryDate) {
+                                    const k = toFirebaseKey(item.id || item.clientPhone);
+                                    membersRef.child(k).transaction(function(curr) {
+                                      return curr || item;
+                                    });
+                                  }
+                                });
+                              }
+                            };
+                          } catch (e) {}
+                        });
+                      };
+                    } catch (e) {}
+                  });
+                }
+              }).catch(function() {});
+            }
+          } catch (e) {}
+        }
+
+        // Run non-destructive migration on start
+        runAutoMigration();
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
+
     <script>
       // Register service worker for standalone PWA installation
       if ('serviceWorker' in navigator) {
