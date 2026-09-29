@@ -386,6 +386,18 @@ export default function App() {
       }
     };
 
+    const handleFirebaseOrderAdded = (e: CustomEvent<Order>) => {
+      const added = e.detail;
+      if (added && added.id) {
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === added.id)) {
+            return prev;
+          }
+          return sortOrdersDescending(migrateOrdersToSequential([added, ...prev]));
+        });
+      }
+    };
+
     const handleFirebaseMembers = (e: CustomEvent<MembershipRecord[]>) => {
       if (Array.isArray(e.detail) && e.detail.length > 0) {
         setMemberships(e.detail);
@@ -399,11 +411,13 @@ export default function App() {
     };
 
     window.addEventListener('salon:firebase-orders-updated', handleFirebaseOrders as EventListener);
+    window.addEventListener('salon:firebase-order-added', handleFirebaseOrderAdded as EventListener);
     window.addEventListener('salon:firebase-memberships-updated', handleFirebaseMembers as EventListener);
     window.addEventListener('salon:firebase-staff-updated', handleFirebaseStaff as EventListener);
 
     return () => {
       window.removeEventListener('salon:firebase-orders-updated', handleFirebaseOrders as EventListener);
+      window.removeEventListener('salon:firebase-order-added', handleFirebaseOrderAdded as EventListener);
       window.removeEventListener('salon:firebase-memberships-updated', handleFirebaseMembers as EventListener);
       window.removeEventListener('salon:firebase-staff-updated', handleFirebaseStaff as EventListener);
     };
@@ -543,6 +557,12 @@ export default function App() {
       staffName: assignedStaff,
     };
 
+    // 1. INSTANT PUSH ON FINALIZE BILL: Executes Firebase Realtime Database .set() immediately
+    // BEFORE any UI state resets, modals close, or background tasks complete!
+    if (typeof window !== 'undefined' && window.salonFirebase) {
+      window.salonFirebase.syncOrder(orderWithStaff);
+    }
+
     // a) Update the main "Sales History" list (sorted descending with newest invoice # at top)
     setOrders((prev) => sortOrdersDescending([orderWithStaff, ...prev]));
     setCartItems([]);
@@ -575,9 +595,8 @@ export default function App() {
 
     setStaffMembers(updatedStaff);
 
-    // c) Multi-Device Real-time Sync via Firebase Realtime Database
+    // c) Multi-Device Real-time Sync for Staff performance
     if (typeof window !== 'undefined' && window.salonFirebase) {
-      window.salonFirebase.syncOrder(orderWithStaff);
       window.salonFirebase.syncStaffMembers(updatedStaff);
       window.salonFirebase.syncStaffServiceRecord(assignedStaff, newHistoryRecord);
     }

@@ -199,6 +199,10 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
       date: formatIndianDateTime(new Date()),
     };
 
+    // Execute instant Firebase Realtime Database sync synchronously BEFORE UI resets
+    if (typeof window !== 'undefined' && window.salonFirebase) {
+      window.salonFirebase.syncOrder(newOrder);
+    }
 
     onCompleteOrder(newOrder);
   };
