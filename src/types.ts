@@ -42,9 +42,43 @@ export interface Order {
   subtotal: number;
   tax: number;
   total: number;
-  paymentMethod: 'cash' | 'card' | 'upi';
+  paymentMethod: 'cash' | 'card' | 'upi' | 'Loyalty Member Pass' | string;
+  notes?: string;
+  isLoyaltyPassApplied?: boolean;
+  loyaltyPassId?: string;
   date: string;
   staffName?: string;
+}
+
+export interface LoyaltyPassService {
+  id: string;
+  name: string;
+  price: number;
+}
+
+export interface LoyaltyPassUsageLog {
+  date: string;
+  serviceName: string;
+  staffName?: string;
+  visitNumber: number;
+}
+
+export interface LoyaltyPass {
+  id: string;
+  clientName: string;
+  clientPhone: string;
+  serviceId: string; // primary service id or comma-separated
+  serviceName: string; // primary service name or comma-separated
+  eligibleServices?: LoyaltyPassService[];
+  advancePaidAmount?: number;
+  paidVisits: number;
+  bonusVisits: number;
+  totalVisits: number;
+  remainingVisits: number;
+  status: 'Active' | 'Completed';
+  createdAt: string;
+  updatedAt?: string;
+  usageHistory?: LoyaltyPassUsageLog[];
 }
 
 export interface SalonSettings {
@@ -82,9 +116,17 @@ export interface SalonFirebaseBridge {
   syncMembership: (member: MembershipRecord) => Promise<unknown>;
   syncStaffMembers: (staffList: StaffMember[]) => Promise<unknown>;
   syncStaffServiceRecord: (staffName: string, record: StaffServiceRecord) => Promise<unknown>;
+  syncServices?: (servicesList: SalonService[]) => Promise<unknown>;
+  syncServiceItem?: (service: SalonService) => Promise<unknown>;
+  deleteServiceItem?: (serviceId: string) => Promise<unknown>;
+  syncCategories?: (categoriesList: string[]) => Promise<unknown>;
+  syncLoyaltyPass?: (pass: LoyaltyPass) => Promise<unknown>;
+  getLoyaltyPasses?: () => LoyaltyPass[];
   getOrders: () => Order[];
   getMemberships: () => MembershipRecord[];
   getStaff: () => StaffMember[];
+  getServices?: () => SalonService[];
+  getCategories?: () => string[];
   resetOrders?: () => Promise<unknown>;
 }
 
@@ -93,6 +135,9 @@ declare global {
     salonFirebase?: SalonFirebaseBridge;
     __salonLastFirebaseOrders?: Order[];
     __salonLastFirebaseMembers?: MembershipRecord[];
+    __salonLastFirebaseLoyaltyPasses?: LoyaltyPass[];
     __salonLastFirebaseStaff?: StaffMember[];
+    __salonLastFirebaseServices?: SalonService[];
+    __salonLastFirebaseCategories?: string[];
   }
 }

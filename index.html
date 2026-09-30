@@ -111,7 +111,18 @@
         // Fast in-memory mirrors
         window.__salonLastFirebaseOrders = [];
         window.__salonLastFirebaseMembers = [];
+        window.__salonLastFirebaseLoyaltyPasses = [];
         window.__salonLastFirebaseStaff = [];
+        window.__salonLastFirebaseServices = [];
+        window.__salonLastFirebaseCategories = [];
+
+        // Pre-load cached loyalty passes from localStorage if available
+        try {
+          const cachedPasses = localStorage.getItem('backstage_loyalty_passes');
+          if (cachedPasses) {
+            window.__salonLastFirebaseLoyaltyPasses = JSON.parse(cachedPasses);
+          }
+        } catch(e) {}
 
         // Global Salon Firebase Bridge for Instant Sync
         window.salonFirebase = {
@@ -125,35 +136,56 @@
             if (!order || !order.id) return Promise.resolve();
             const key = toFirebaseKey(order.id);
 
+            // Sanitize order & ensure item-level staff ID and Name are explicitly preserved
+            var cleanOrder;
+            try {
+              cleanOrder = JSON.parse(JSON.stringify(order));
+            } catch(e) {
+              cleanOrder = Object.assign({}, order);
+            }
+
+            if (Array.isArray(cleanOrder.items)) {
+              cleanOrder.items = cleanOrder.items.map(function(item) {
+                var sName = item.stylistName || cleanOrder.staffName || 'Kunal';
+                var sId = item.stylistId || ('staff-' + sName.toLowerCase().replace(/\s+/g, '-'));
+                return {
+                  service: item.service,
+                  quantity: item.quantity || 1,
+                  stylistId: sId,
+                  stylistName: sName
+                };
+              });
+            }
+
             // a. Immediately update local in-memory mirror and cache
             let found = false;
             for (let i = 0; i < window.__salonLastFirebaseOrders.length; i++) {
-              if (window.__salonLastFirebaseOrders[i].id === order.id) {
-                window.__salonLastFirebaseOrders[i] = order;
+              if (window.__salonLastFirebaseOrders[i].id === cleanOrder.id) {
+                window.__salonLastFirebaseOrders[i] = cleanOrder;
                 found = true;
                 break;
               }
             }
             if (!found) {
-              window.__salonLastFirebaseOrders.unshift(order);
+              window.__salonLastFirebaseOrders.unshift(cleanOrder);
             }
             try {
               localStorage.setItem('backstage_orders', JSON.stringify(window.__salonLastFirebaseOrders));
             } catch (e) {}
 
             // b. Queue locally first as absolute failsafe
-            addToOfflineQueue({ type: 'order', id: order.id, data: order, timestamp: Date.now() });
+            addToOfflineQueue({ type: 'order', id: cleanOrder.id, data: cleanOrder, timestamp: Date.now() });
 
             // c. Instant WebSocket push to Firebase Realtime Database
             if (!db) return Promise.resolve();
 
             // Set priority high / execute set immediately
             const ref = db.ref('orders/' + key);
-            const pushPromise = ref.set(order);
+            const pushPromise = ref.set(cleanOrder);
 
             pushPromise.then(function() {
-              removeFromOfflineQueue('order', order.id);
-              console.log('[Firebase RTDB] Instant push success for order:', order.id);
+              removeFromOfflineQueue('order', cleanOrder.id);
+              console.log('[Firebase RTDB] Instant push success for order:', cleanOrder.id);
             }).catch(function(err) {
               console.warn('[Firebase RTDB] Write pending (offline queue active):', err);
             });
@@ -191,6 +223,43 @@
             promise.then(function() {
               removeFromOfflineQueue('membership', id);
             }).catch(function() {});
+
+            return promise;
+          },
+
+          // Push loyalty member pass instantly to Firebase Realtime Database under loyalty_passes node
+          syncLoyaltyPass: function(pass) {
+            if (!pass) return Promise.resolve();
+            const id = pass.id || pass.clientPhone;
+            const key = toFirebaseKey(id);
+
+            // Fast local mirror update
+            let found = false;
+            for (let i = 0; i < window.__salonLastFirebaseLoyaltyPasses.length; i++) {
+              if (window.__salonLastFirebaseLoyaltyPasses[i].id === pass.id) {
+                window.__salonLastFirebaseLoyaltyPasses[i] = pass;
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              window.__salonLastFirebaseLoyaltyPasses.unshift(pass);
+            }
+            try {
+              localStorage.setItem('backstage_loyalty_passes', JSON.stringify(window.__salonLastFirebaseLoyaltyPasses));
+            } catch (e) {}
+
+            addToOfflineQueue({ type: 'loyalty_pass', id: id, data: pass, timestamp: Date.now() });
+
+            if (!db) return Promise.resolve();
+            const ref = db.ref('loyalty_passes/' + key);
+            const promise = ref.set(pass);
+            promise.then(function() {
+              removeFromOfflineQueue('loyalty_pass', id);
+              console.log('[Firebase RTDB] Instant push success for loyalty_passes:', id);
+            }).catch(function(err) {
+              console.warn('[Firebase RTDB] loyalty pass write pending:', err);
+            });
 
             return promise;
           },
@@ -233,14 +302,93 @@
             });
           },
 
+          syncServices: function(servicesList) {
+            if (!Array.isArray(servicesList)) return Promise.resolve();
+            window.__salonLastFirebaseServices = servicesList;
+            try {
+              localStorage.setItem('backstage_services', JSON.stringify(servicesList));
+            } catch (e) {}
+
+            if (!db) return Promise.resolve();
+            const updates = {};
+            servicesList.forEach(function(s) {
+              if (s && s.id) {
+                updates[toFirebaseKey(s.id)] = s;
+              }
+            });
+            return db.ref('services').set(updates).catch(function(err) {
+              console.warn('[Firebase RTDB] services sync warning:', err);
+            });
+          },
+
+          syncServiceItem: function(service) {
+            if (!service || !service.id) return Promise.resolve();
+            const key = toFirebaseKey(service.id);
+            let found = false;
+            for (let i = 0; i < window.__salonLastFirebaseServices.length; i++) {
+              if (window.__salonLastFirebaseServices[i].id === service.id) {
+                window.__salonLastFirebaseServices[i] = service;
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              window.__salonLastFirebaseServices.push(service);
+            }
+            try {
+              localStorage.setItem('backstage_services', JSON.stringify(window.__salonLastFirebaseServices));
+            } catch (e) {}
+
+            if (!db) return Promise.resolve();
+            return db.ref('services/' + key).set(service).catch(function(err) {
+              console.warn('[Firebase RTDB] service item sync warning:', err);
+            });
+          },
+
+          deleteServiceItem: function(serviceId) {
+            if (!serviceId) return Promise.resolve();
+            window.__salonLastFirebaseServices = window.__salonLastFirebaseServices.filter(function(s) {
+              return s.id !== serviceId;
+            });
+            try {
+              localStorage.setItem('backstage_services', JSON.stringify(window.__salonLastFirebaseServices));
+            } catch (e) {}
+
+            if (!db) return Promise.resolve();
+            return db.ref('services/' + toFirebaseKey(serviceId)).remove().catch(function(err) {
+              console.warn('[Firebase RTDB] service delete warning:', err);
+            });
+          },
+
+          syncCategories: function(categoriesList) {
+            if (!Array.isArray(categoriesList)) return Promise.resolve();
+            window.__salonLastFirebaseCategories = categoriesList;
+            try {
+              localStorage.setItem('backstage_service_categories', JSON.stringify(categoriesList));
+            } catch (e) {}
+            if (!db) return Promise.resolve();
+            return db.ref('service_categories').set(categoriesList).catch(function(err) {
+              console.warn('[Firebase RTDB] categories sync warning:', err);
+            });
+          },
+
           getOrders: function() {
             return window.__salonLastFirebaseOrders || [];
           },
           getMemberships: function() {
             return window.__salonLastFirebaseMembers || [];
           },
+          getLoyaltyPasses: function() {
+            return window.__salonLastFirebaseLoyaltyPasses || [];
+          },
           getStaff: function() {
             return window.__salonLastFirebaseStaff || [];
+          },
+          getServices: function() {
+            return window.__salonLastFirebaseServices || [];
+          },
+          getCategories: function() {
+            return window.__salonLastFirebaseCategories || [];
           },
           flushQueue: function() {
             flushOfflineQueue();
@@ -252,13 +400,19 @@
         // 2. Persistent Realtime WebSocket Listeners
         const ordersRef = db.ref('orders');
         const membersRef = db.ref('memberships');
+        const loyaltyPassesRef = db.ref('loyalty_passes');
         const staffRef = db.ref('staff_members');
+        const servicesRef = db.ref('services');
+        const categoriesRef = db.ref('service_categories');
 
         try {
           // Keep active socket pipe open and synchronized
           ordersRef.keepSynced(true);
           membersRef.keepSynced(true);
+          loyaltyPassesRef.keepSynced(true);
           staffRef.keepSynced(true);
+          servicesRef.keepSynced(true);
+          categoriesRef.keepSynced(true);
         } catch (e) {}
 
         // A. Real-time child_added on Orders: Triggers INSTANTLY when ANY device creates an order
@@ -356,13 +510,67 @@
           }
         });
 
+        // D2. Loyalty Passes Listeners (Real-time sync across devices)
+        loyaltyPassesRef.on('child_added', function(snapshot) {
+          const pass = snapshot.val();
+          if (!pass || !pass.id) return;
+          const exists = window.__salonLastFirebaseLoyaltyPasses.some(function(p) {
+            return p.id === pass.id;
+          });
+          if (!exists) {
+            window.__salonLastFirebaseLoyaltyPasses.unshift(pass);
+            window.dispatchEvent(new CustomEvent('salon:firebase-loyalty-passes-updated', { detail: window.__salonLastFirebaseLoyaltyPasses }));
+            try {
+              localStorage.setItem('backstage_loyalty_passes', JSON.stringify(window.__salonLastFirebaseLoyaltyPasses));
+            } catch (e) {}
+          }
+        });
+
+        loyaltyPassesRef.on('child_changed', function(snapshot) {
+          const updatedPass = snapshot.val();
+          if (!updatedPass || !updatedPass.id) return;
+          for (let i = 0; i < window.__salonLastFirebaseLoyaltyPasses.length; i++) {
+            if (window.__salonLastFirebaseLoyaltyPasses[i].id === updatedPass.id) {
+              window.__salonLastFirebaseLoyaltyPasses[i] = updatedPass;
+              break;
+            }
+          }
+          window.dispatchEvent(new CustomEvent('salon:firebase-loyalty-passes-updated', { detail: window.__salonLastFirebaseLoyaltyPasses }));
+          try {
+            localStorage.setItem('backstage_loyalty_passes', JSON.stringify(window.__salonLastFirebaseLoyaltyPasses));
+          } catch (e) {}
+        });
+
+        loyaltyPassesRef.on('value', function(snapshot) {
+          const val = snapshot.val();
+          const list = [];
+          if (val) {
+            Object.keys(val).forEach(function(k) {
+              if (val[k]) list.push(val[k]);
+            });
+          }
+          window.__salonLastFirebaseLoyaltyPasses = list;
+          window.dispatchEvent(new CustomEvent('salon:firebase-loyalty-passes-updated', { detail: list }));
+          if (list.length > 0) {
+            try {
+              localStorage.setItem('backstage_loyalty_passes', JSON.stringify(list));
+            } catch (e) {}
+          }
+        });
+
         // E. Staff Listeners
         staffRef.on('value', function(snapshot) {
           const val = snapshot.val();
           const list = [];
           if (val) {
             Object.keys(val).forEach(function(k) {
-              if (val[k]) list.push(val[k]);
+              if (val[k]) {
+                const s = val[k];
+                if (!Array.isArray(s.history)) {
+                  s.history = s.history ? Object.values(s.history) : [];
+                }
+                list.push(s);
+              }
             });
           }
           window.__salonLastFirebaseStaff = list;
@@ -374,7 +582,38 @@
           }
         });
 
-        // F. Connection & Auto-Reconnect
+        // F. Services & Categories Listeners for multi-device realtime sync
+        servicesRef.on('value', function(snapshot) {
+          const val = snapshot.val();
+          const list = [];
+          if (val) {
+            Object.keys(val).forEach(function(k) {
+              if (val[k] && val[k].id) list.push(val[k]);
+            });
+          }
+          if (list.length > 0) {
+            window.__salonLastFirebaseServices = list;
+            window.dispatchEvent(new CustomEvent('salon:firebase-services-updated', { detail: list }));
+            try {
+              localStorage.setItem('backstage_services', JSON.stringify(list));
+            } catch (e) {}
+          }
+        }, function(err) {
+          console.warn('[Firebase RTDB] services value error:', err);
+        });
+
+        categoriesRef.on('value', function(snapshot) {
+          const val = snapshot.val();
+          if (Array.isArray(val) && val.length > 0) {
+            window.__salonLastFirebaseCategories = val;
+            window.dispatchEvent(new CustomEvent('salon:firebase-categories-updated', { detail: val }));
+            try {
+              localStorage.setItem('backstage_service_categories', JSON.stringify(val));
+            } catch (e) {}
+          }
+        });
+
+        // G. Connection & Auto-Reconnect
         db.ref('.info/connected').on('value', function(snap) {
           const isConnected = Boolean(snap.val());
           window.dispatchEvent(new CustomEvent('salon:firebase-connection', { detail: { connected: isConnected } }));
@@ -400,6 +639,11 @@
               const k = toFirebaseKey(item.id);
               db.ref('memberships/' + k).set(item.data).then(function() {
                 removeFromOfflineQueue('membership', item.id);
+              }).catch(function() {});
+            } else if (item.type === 'loyalty_pass' && item.data) {
+              const k = toFirebaseKey(item.id);
+              db.ref('loyalty_passes/' + k).set(item.data).then(function() {
+                removeFromOfflineQueue('loyalty_pass', item.id);
               }).catch(function() {});
             }
           });
@@ -474,15 +718,35 @@
     <script type="module" src="/src/main.tsx"></script>
 
     <script>
-      // Register service worker for standalone PWA installation
+      // Service worker management: prevent stale React module caching in preview/dev, allow clean standalone PWA in production
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function() {
-          navigator.serviceWorker.register('/service-worker.js').then(function(reg) {
-            console.log('Enreach Salon ServiceWorker registered:', reg.scope);
-          }).catch(function(err) {
-            console.log('Enreach Salon ServiceWorker registration failed:', err);
+        const isPreviewOrDev =
+          location.hostname === 'localhost' ||
+          location.hostname === '127.0.0.1' ||
+          location.hostname.includes('.run.app') ||
+          location.port === '3000';
+
+        if (isPreviewOrDev) {
+          // Clean up any stale service workers or caches that could cause duplicate React runtime instances
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (let reg of registrations) {
+              reg.unregister();
+            }
           });
-        });
+          if ('caches' in window) {
+            caches.keys().then(function(names) {
+              for (let name of names) {
+                if (name.includes('enreach-salon-pos-v1') || name.includes('enreach-salon-pos-v2')) {
+                  caches.delete(name);
+                }
+              }
+            });
+          }
+        } else {
+          window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/service-worker.js').catch(function() {});
+          });
+        }
       }
     </script>
   </body>

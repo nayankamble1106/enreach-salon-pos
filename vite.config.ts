@@ -77,7 +77,13 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve('.'),
+        'react': path.resolve('node_modules/react'),
+        'react-dom': path.resolve('node_modules/react-dom'),
       },
+      dedupe: ['react', 'react-dom'],
+    },
+    optimizeDeps: {
+      include: ['react', 'react-dom', 'react-dom/client'],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

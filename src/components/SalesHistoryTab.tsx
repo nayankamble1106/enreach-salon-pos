@@ -90,7 +90,10 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
       const matchesPhone = order.clientPhone ? order.clientPhone.toLowerCase().includes(term) : false;
       const matchesId = order.id.toLowerCase().includes(term);
       const matchesStaff = order.staffName ? order.staffName.toLowerCase().includes(term) : false;
-      return matchesClient || matchesPhone || matchesId || matchesStaff;
+      const matchesItemStaff =
+        Array.isArray(order.items) &&
+        order.items.some((it) => it.stylistName && it.stylistName.toLowerCase().includes(term));
+      return matchesClient || matchesPhone || matchesId || matchesStaff || matchesItemStaff;
     });
 
     return sortOrdersDescending(results);

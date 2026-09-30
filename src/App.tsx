@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TabType, CartItem, SalonService, Stylist, Order, SalonSettings, MembershipRecord } from './types';
+import { TabType, CartItem, SalonService, Stylist, Order, SalonSettings, MembershipRecord, LoyaltyPass } from './types';
 import { SALON_SERVICES, STYLISTS, DEFAULT_SETTINGS } from './data/mockData';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
@@ -59,6 +59,7 @@ const OFFICIAL_STAFF_NAMES = [
   'Sapna',
   'Juhi',
   'Vishal sir',
+  'Aman',
 ];
 
 const INITIAL_STAFF_MEMBERS: StaffMember[] = [
@@ -68,6 +69,7 @@ const INITIAL_STAFF_MEMBERS: StaffMember[] = [
   { id: 'staff-4', name: 'Sapna', role: 'Senior Aesthetician & Skin Expert', totalSalesThisMonth: 0, history: [] },
   { id: 'staff-5', name: 'Juhi', role: 'Beauty Specialist & Makeup Artist', totalSalesThisMonth: 0, history: [] },
   { id: 'staff-6', name: 'Vishal sir', role: 'Creative Director & Master Stylist', totalSalesThisMonth: 0, history: [] },
+  { id: 'staff-7', name: 'Aman', role: 'Hair Stylist & Grooming Specialist', totalSalesThisMonth: 0, history: [] },
 ];
 
 const INITIAL_MEMBERSHIPS: MembershipRecord[] = [];
@@ -109,7 +111,10 @@ export default function App() {
         const parsed: StaffMember[] = JSON.parse(saved);
         const hasLegacyNames = parsed.some((s) => ['Aman', 'Rahul', 'Priya', 'Vikram', 'Sneha', 'Pooja'].includes(s.name));
         if (!hasLegacyNames && parsed.length === OFFICIAL_STAFF_NAMES.length) {
-          return parsed;
+          return parsed.map((s) => ({
+            ...s,
+            history: Array.isArray(s.history) ? s.history : (s.history ? Object.values(s.history) : []),
+          }));
         }
       }
       return INITIAL_STAFF_MEMBERS;
@@ -133,6 +138,100 @@ export default function App() {
       return INITIAL_MEMBERSHIPS;
     }
   });
+
+  // Loyalty Member Passes State (persisted locally, synced with Firebase Realtime Database)
+  const [loyaltyPasses, setLoyaltyPasses] = useState<LoyaltyPass[]>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.__salonLastFirebaseLoyaltyPasses && window.__salonLastFirebaseLoyaltyPasses.length > 0) {
+        return window.__salonLastFirebaseLoyaltyPasses;
+      }
+      const saved = safeGetItem('backstage_loyalty_passes');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  // Services Catalog State (Synced with Firebase Realtime Database & Cached Offline)
+  const [services, setServices] = useState<SalonService[]>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.__salonLastFirebaseServices && window.__salonLastFirebaseServices.length > 0) {
+        return window.__salonLastFirebaseServices;
+      }
+      const saved = safeGetItem('backstage_services');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return SALON_SERVICES;
+  });
+
+  // Dynamic Custom Categories (e.g. Products, Spa)
+  const [customCategories, setCustomCategories] = useState<string[]>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.__salonLastFirebaseCategories && window.__salonLastFirebaseCategories.length > 0) {
+        return window.__salonLastFirebaseCategories;
+      }
+      const saved = safeGetItem('backstage_service_categories');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return [];
+  });
+
+  // Service Manager CRUD Handlers with Instant Multi-Device Firebase RTDB Sync
+  const handleAddService = (newService: SalonService) => {
+    setServices((prev) => {
+      const updated = [...prev, newService];
+      safeSetItem('backstage_services', JSON.stringify(updated));
+      return updated;
+    });
+    if (typeof window !== 'undefined' && window.salonFirebase) {
+      window.salonFirebase.syncServiceItem?.(newService);
+    }
+  };
+
+  const handleUpdateService = (updatedService: SalonService) => {
+    setServices((prev) => {
+      const updated = prev.map((s) => (s.id === updatedService.id ? updatedService : s));
+      safeSetItem('backstage_services', JSON.stringify(updated));
+      return updated;
+    });
+    if (typeof window !== 'undefined' && window.salonFirebase) {
+      window.salonFirebase.syncServiceItem?.(updatedService);
+    }
+  };
+
+  const handleDeleteService = (serviceId: string) => {
+    setServices((prev) => {
+      const updated = prev.filter((s) => s.id !== serviceId);
+      safeSetItem('backstage_services', JSON.stringify(updated));
+      return updated;
+    });
+    // Remove from cart if item is currently in cart
+    setCartItems((prev) => prev.filter((item) => item.service.id !== serviceId));
+    if (typeof window !== 'undefined' && window.salonFirebase) {
+      window.salonFirebase.deleteServiceItem?.(serviceId);
+    }
+  };
+
+  const handleAddCategory = (categoryName: string) => {
+    setCustomCategories((prev) => {
+      if (prev.includes(categoryName)) return prev;
+      const updated = [...prev, categoryName];
+      safeSetItem('backstage_service_categories', JSON.stringify(updated));
+      if (typeof window !== 'undefined' && window.salonFirebase?.syncCategories) {
+        window.salonFirebase.syncCategories(updated);
+      }
+      return updated;
+    });
+  };
 
   // Automatically revoke PIN authentication when user navigates away from sensitive tabs
   useEffect(() => {
@@ -194,9 +293,30 @@ export default function App() {
         if (fbMembers.length > 0) {
           setMemberships(fbMembers);
         }
+        const fbPasses = window.salonFirebase.getLoyaltyPasses?.();
+        if (fbPasses && fbPasses.length > 0) {
+          setLoyaltyPasses(fbPasses);
+        }
         const fbStaff = window.salonFirebase.getStaff();
         if (fbStaff.length > 0) {
-          setStaffMembers(fbStaff);
+          setStaffMembers(
+            fbStaff.map((s) => ({
+              ...s,
+              history: Array.isArray(s.history)
+                ? s.history
+                : s.history
+                ? (Object.values(s.history) as StaffServiceRecord[])
+                : [],
+            }))
+          );
+        }
+        const fbServices = window.salonFirebase.getServices?.();
+        if (fbServices && fbServices.length > 0) {
+          setServices(fbServices);
+        }
+        const fbCats = window.salonFirebase.getCategories?.();
+        if (fbCats && fbCats.length > 0) {
+          setCustomCategories(fbCats);
         }
       }
 
@@ -377,6 +497,12 @@ export default function App() {
       if (window.__salonLastFirebaseStaff && window.__salonLastFirebaseStaff.length > 0) {
         setStaffMembers(window.__salonLastFirebaseStaff);
       }
+      if (window.__salonLastFirebaseServices && window.__salonLastFirebaseServices.length > 0) {
+        setServices(window.__salonLastFirebaseServices);
+      }
+      if (window.__salonLastFirebaseCategories && window.__salonLastFirebaseCategories.length > 0) {
+        setCustomCategories(window.__salonLastFirebaseCategories);
+      }
     }
 
     // 2. Real-time Firebase listeners via custom events
@@ -406,20 +532,53 @@ export default function App() {
 
     const handleFirebaseStaff = (e: CustomEvent<StaffMember[]>) => {
       if (Array.isArray(e.detail) && e.detail.length > 0) {
-        setStaffMembers(e.detail);
+        setStaffMembers(
+          e.detail.map((s) => ({
+            ...s,
+            history: Array.isArray(s.history)
+              ? s.history
+              : s.history
+              ? (Object.values(s.history) as StaffServiceRecord[])
+              : [],
+          }))
+        );
+      }
+    };
+
+    const handleFirebaseServices = (e: CustomEvent<SalonService[]>) => {
+      if (Array.isArray(e.detail) && e.detail.length > 0) {
+        setServices(e.detail);
+      }
+    };
+
+    const handleFirebaseCategories = (e: CustomEvent<string[]>) => {
+      if (Array.isArray(e.detail) && e.detail.length > 0) {
+        setCustomCategories(e.detail);
+      }
+    };
+
+    const handleFirebaseLoyaltyPasses = (e: CustomEvent<LoyaltyPass[]>) => {
+      if (Array.isArray(e.detail) && e.detail.length > 0) {
+        setLoyaltyPasses(e.detail);
       }
     };
 
     window.addEventListener('salon:firebase-orders-updated', handleFirebaseOrders as EventListener);
     window.addEventListener('salon:firebase-order-added', handleFirebaseOrderAdded as EventListener);
     window.addEventListener('salon:firebase-memberships-updated', handleFirebaseMembers as EventListener);
+    window.addEventListener('salon:firebase-loyalty-passes-updated', handleFirebaseLoyaltyPasses as EventListener);
     window.addEventListener('salon:firebase-staff-updated', handleFirebaseStaff as EventListener);
+    window.addEventListener('salon:firebase-services-updated', handleFirebaseServices as EventListener);
+    window.addEventListener('salon:firebase-categories-updated', handleFirebaseCategories as EventListener);
 
     return () => {
       window.removeEventListener('salon:firebase-orders-updated', handleFirebaseOrders as EventListener);
       window.removeEventListener('salon:firebase-order-added', handleFirebaseOrderAdded as EventListener);
       window.removeEventListener('salon:firebase-memberships-updated', handleFirebaseMembers as EventListener);
+      window.removeEventListener('salon:firebase-loyalty-passes-updated', handleFirebaseLoyaltyPasses as EventListener);
       window.removeEventListener('salon:firebase-staff-updated', handleFirebaseStaff as EventListener);
+      window.removeEventListener('salon:firebase-services-updated', handleFirebaseServices as EventListener);
+      window.removeEventListener('salon:firebase-categories-updated', handleFirebaseCategories as EventListener);
     };
   }, []);
 
@@ -470,6 +629,35 @@ export default function App() {
     }
   }, [memberships]);
 
+  // Persist loyalty passes
+  useEffect(() => {
+    try {
+      safeSetItem('backstage_loyalty_passes', JSON.stringify(loyaltyPasses));
+    } catch (e) {
+      console.warn('LocalStorage save failed:', e);
+    }
+  }, [loyaltyPasses]);
+
+  // Persist services catalog locally for offline PWA fallback
+  useEffect(() => {
+    if (services.length > 0) {
+      try {
+        safeSetItem('backstage_services', JSON.stringify(services));
+      } catch (e) {
+        console.warn('LocalStorage save failed:', e);
+      }
+    }
+  }, [services]);
+
+  // Persist custom categories locally
+  useEffect(() => {
+    try {
+      safeSetItem('backstage_service_categories', JSON.stringify(customCategories));
+    } catch (e) {
+      console.warn('LocalStorage save failed:', e);
+    }
+  }, [customCategories]);
+
   // Initial cloud synchronization check on app launch
   useEffect(() => {
     loadCloudData();
@@ -506,6 +694,7 @@ export default function App() {
 
   // Cart operations
   const handleAddToCart = (service: SalonService, stylist: Stylist) => {
+    const assignedStaff = selectedBillingStaff || stylist.name || 'Kunal';
     setCartItems((prev) => {
       const existing = prev.find((item) => item.service.id === service.id);
       if (existing) {
@@ -520,8 +709,8 @@ export default function App() {
         {
           service,
           quantity: 1,
-          stylistId: stylist.id,
-          stylistName: stylist.name,
+          stylistId: `staff-${assignedStaff.toLowerCase().replace(/\s+/g, '-')}`,
+          stylistName: assignedStaff,
         },
       ];
     });
@@ -549,12 +738,38 @@ export default function App() {
     setCartItems([]);
   };
 
+  // Item-level staff assignment handler: updates stylist for a specific item in cart
+  const handleUpdateCartItemStaff = (serviceId: string, staffName: string) => {
+    setCartItems((prev) =>
+      prev.map((item) =>
+        item.service.id === serviceId
+          ? {
+              ...item,
+              stylistName: staffName,
+              stylistId: `staff-${staffName.toLowerCase().replace(/\s+/g, '-')}`,
+            }
+          : item
+      )
+    );
+  };
+
+  // Global staff selection handler: defaults all items in current cart to this staff
+  const handleSelectBillingStaff = (staffName: string) => {
+    setSelectedBillingStaff(staffName);
+    setCartItems((prev) =>
+      prev.map((item) => ({
+        ...item,
+        stylistName: staffName,
+        stylistId: `staff-${staffName.toLowerCase().replace(/\s+/g, '-')}`,
+      }))
+    );
+  };
+
   // Finalize order: updates Sales History, Staff performance, and activates/renews Membership if toggled
   const handleCompleteOrder = (newOrder: Order) => {
-    const assignedStaff = newOrder.staffName || selectedBillingStaff || 'Kunal';
     const orderWithStaff: Order = {
       ...newOrder,
-      staffName: assignedStaff,
+      staffName: newOrder.staffName || selectedBillingStaff || 'Kunal',
     };
 
     // 1. INSTANT PUSH ON FINALIZE BILL: Executes Firebase Realtime Database .set() immediately
@@ -569,28 +784,62 @@ export default function App() {
     playLuxuryChime();
     setActiveReceiptOrder(orderWithStaff);
 
-    // b) Update the selected Staff's personal sales total and history table in the Staff Dashboard
-    const serviceNames = orderWithStaff.items.length > 0
-      ? orderWithStaff.items.map((i) => `${i.service.name}${i.quantity > 1 ? ` (x${i.quantity})` : ''}`).join(', ')
-      : 'Salon Service';
-
-    const newHistoryRecord: StaffServiceRecord = {
-      id: `rec-${Date.now()}`,
-      date: formatIndianDate(new Date()),
-      clientName: orderWithStaff.clientName || 'Walk-in Client',
-      serviceName: serviceNames,
-      amount: orderWithStaff.total,
-    };
+    // b) Update Staff performance totals & history: credit each employee ONLY for the specific services they performed
+    const totalOrderGross = orderWithStaff.items.reduce(
+      (sum, it) => sum + it.service.price * it.quantity,
+      0
+    );
 
     const updatedStaff = staffMembers.map((staff) => {
-      if (staff.name === assignedStaff) {
-        return {
-          ...staff,
-          totalSalesThisMonth: staff.totalSalesThisMonth + orderWithStaff.total,
-          history: [newHistoryRecord, ...staff.history],
-        };
+      // Find items assigned to this specific staff member
+      const staffItems = orderWithStaff.items.filter((it) => {
+        if (it.stylistName) {
+          return it.stylistName.trim().toLowerCase() === staff.name.trim().toLowerCase();
+        }
+        if (orderWithStaff.staffName) {
+          const split = orderWithStaff.staffName.split(',').map((s) => s.trim().toLowerCase());
+          return split.includes(staff.name.trim().toLowerCase());
+        }
+        return false;
+      });
+
+      if (staffItems.length === 0) {
+        return staff;
       }
-      return staff;
+
+      const staffGross = staffItems.reduce((sum, it) => sum + it.service.price * it.quantity, 0);
+      const staffProportionalTotal =
+        totalOrderGross > 0 ? Math.round((staffGross / totalOrderGross) * orderWithStaff.total) : staffGross;
+
+      const staffServiceNames = staffItems
+        .map((i) => `${i.service.name}${i.quantity > 1 ? ` (x${i.quantity})` : ''}`)
+        .join(', ');
+
+      const newHistoryRecord: StaffServiceRecord = {
+        id: `rec-${orderWithStaff.id}-${staff.name}-${Date.now()}`,
+        date: formatIndianDate(new Date()),
+        clientName: orderWithStaff.clientName || 'Walk-in Client',
+        serviceName: staffServiceNames,
+        amount: staffProportionalTotal,
+      };
+
+      if (typeof window !== 'undefined' && window.salonFirebase) {
+        window.salonFirebase.syncStaffServiceRecord(staff.name, newHistoryRecord);
+      }
+
+      syncStaffServiceToCloud(staff.name, newHistoryRecord).catch(() => {});
+
+      const currentHistory: StaffServiceRecord[] = Array.isArray(staff.history)
+        ? staff.history
+        : typeof staff.history === 'object' && staff.history !== null
+        ? (Object.values(staff.history) as StaffServiceRecord[])
+        : [];
+
+      return {
+        ...staff,
+        totalSalesThisMonth: (staff.totalSalesThisMonth || 0) + staffProportionalTotal,
+        history: [newHistoryRecord, ...currentHistory],
+      };
     });
 
     setStaffMembers(updatedStaff);
@@ -598,7 +847,6 @@ export default function App() {
     // c) Multi-Device Real-time Sync for Staff performance
     if (typeof window !== 'undefined' && window.salonFirebase) {
       window.salonFirebase.syncStaffMembers(updatedStaff);
-      window.salonFirebase.syncStaffServiceRecord(assignedStaff, newHistoryRecord);
     }
 
     // d) If client is an Enreach Member (button was ON during checkout), automatically activate/renew 1-Year (365 Days) membership
@@ -655,10 +903,54 @@ export default function App() {
     }).catch((err) => {
       console.warn('Cloud sync notice:', err);
     });
+  };
 
-    syncStaffServiceToCloud(assignedStaff, newHistoryRecord).catch((err) => {
-      console.warn('Staff sync notice:', err);
+  // Dynamic Add Member handler with immediate Firebase Realtime DB multi-device sync
+  const handleAddMember = (newMember: MembershipRecord) => {
+    setMemberships((prev) => {
+      const cleanPhone = newMember.clientPhone.replace(/\s+/g, '');
+      const existingIdx = prev.findIndex(
+        (m) => m.clientPhone.replace(/\s+/g, '') === cleanPhone || m.id === newMember.id
+      );
+
+      let updated: MembershipRecord[];
+      if (existingIdx >= 0) {
+        updated = [...prev];
+        updated[existingIdx] = { ...updated[existingIdx], ...newMember };
+      } else {
+        updated = [newMember, ...prev];
+      }
+      safeSetItem('backstage_memberships', JSON.stringify(updated));
+      return updated;
     });
+
+    if (typeof window !== 'undefined' && window.salonFirebase) {
+      window.salonFirebase.syncMembership(newMember);
+    }
+    syncMembershipToCloud(newMember).catch(() => {});
+  };
+
+  // Dynamic Add / Update Loyalty Member Pass handlers
+  const handleAddLoyaltyPass = (newPass: LoyaltyPass) => {
+    setLoyaltyPasses((prev) => {
+      const updated = [newPass, ...prev.filter((p) => p.id !== newPass.id)];
+      safeSetItem('backstage_loyalty_passes', JSON.stringify(updated));
+      return updated;
+    });
+    if (typeof window !== 'undefined' && window.salonFirebase?.syncLoyaltyPass) {
+      window.salonFirebase.syncLoyaltyPass(newPass);
+    }
+  };
+
+  const handleUpdateLoyaltyPass = (updatedPass: LoyaltyPass) => {
+    setLoyaltyPasses((prev) => {
+      const updated = prev.map((p) => (p.id === updatedPass.id ? updatedPass : p));
+      safeSetItem('backstage_loyalty_passes', JSON.stringify(updated));
+      return updated;
+    });
+    if (typeof window !== 'undefined' && window.salonFirebase?.syncLoyaltyPass) {
+      window.salonFirebase.syncLoyaltyPass(updatedPass);
+    }
   };
 
   const cartSubtotal = cartItems.reduce(
@@ -700,7 +992,7 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-24 md:pb-10 safe-pl safe-pr">
         {currentTab === 'services' && (
           <ServicesTab
-            services={SALON_SERVICES}
+            services={services}
             stylists={STYLISTS}
             selectedStylistId={selectedStylistId}
             onSelectStylist={setSelectedStylistId}
@@ -709,6 +1001,11 @@ export default function App() {
             onUpdateCartQuantity={handleUpdateCartQuantity}
             currencySymbol={settings.currencySymbol}
             onGoToCart={() => handleSelectTab('cart')}
+            onAddService={handleAddService}
+            onUpdateService={handleUpdateService}
+            onDeleteService={handleDeleteService}
+            customCategories={customCategories}
+            onAddCategory={handleAddCategory}
           />
         )}
 
@@ -734,7 +1031,7 @@ export default function App() {
                 <select
                   id="staff-select-header"
                   value={selectedBillingStaff}
-                  onChange={(e) => setSelectedBillingStaff(e.target.value)}
+                  onChange={(e) => handleSelectBillingStaff(e.target.value)}
                   className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 cursor-pointer transition-colors"
                 >
                   {OFFICIAL_STAFF_NAMES.map((name) => (
@@ -752,15 +1049,18 @@ export default function App() {
               onRemoveItem={handleRemoveCartItem}
               onClearCart={handleClearCart}
               onCompleteOrder={handleCompleteOrder}
+              onUpdateItemStaff={handleUpdateCartItemStaff}
               taxRate={0}
               currencySymbol={settings.currencySymbol}
               onExploreServices={() => handleSelectTab('services')}
               selectedStaff={selectedBillingStaff}
-              onSelectStaff={setSelectedBillingStaff}
+              onSelectStaff={handleSelectBillingStaff}
               staffList={OFFICIAL_STAFF_NAMES}
               existingOrders={orders}
               nextOrderNumber={getNextOrderNumber(orders)}
               memberships={memberships}
+              loyaltyPasses={loyaltyPasses}
+              onUpdateLoyaltyPass={handleUpdateLoyaltyPass}
             />
           </div>
         )}
@@ -770,7 +1070,14 @@ export default function App() {
           <MembershipTab
             memberships={memberships}
             orders={orders}
+            services={services}
+            loyaltyPasses={loyaltyPasses}
             currencySymbol={settings.currencySymbol}
+            onAddMember={handleAddMember}
+            onAddLoyaltyPass={handleAddLoyaltyPass}
+            onAddAdvanceOrder={(advOrder) => {
+              setOrders((prev) => sortOrdersDescending([advOrder, ...prev]));
+            }}
           />
         )}
 

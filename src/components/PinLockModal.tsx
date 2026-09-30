@@ -6,6 +6,7 @@ interface PinLockModalProps {
   onClose: () => void;
   onSuccess: () => void;
   requiredPin?: string;
+  pinLength?: number;
   title?: string;
   description?: string;
 }
@@ -15,11 +16,14 @@ export const PinLockModal: React.FC<PinLockModalProps> = ({
   onClose,
   onSuccess,
   requiredPin = '442401',
+  pinLength,
   title = 'Manager Security Lock',
   description = 'Enter authorization PIN to access confidential records.',
 }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
+
+  const expectedLength = pinLength || requiredPin.length || 4;
 
   // Reset state when modal opens or closes
   useEffect(() => {
@@ -48,10 +52,10 @@ export const PinLockModal: React.FC<PinLockModalProps> = ({
 
   const handleKeypadPress = (val: string) => {
     setError(false);
-    if (pin.length < 6) {
+    if (pin.length < expectedLength) {
       const nextPin = pin + val;
       setPin(nextPin);
-      if (nextPin.length === 6) {
+      if (nextPin.length === expectedLength) {
         handleVerify(nextPin);
       }
     }
@@ -91,9 +95,9 @@ export const PinLockModal: React.FC<PinLockModalProps> = ({
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
           <div>
-            {/* Visual 6-Digit PIN Display (Password dots masked) */}
+            {/* Visual PIN Display (Password dots masked) */}
             <div className="flex justify-center items-center gap-2 mb-3">
-              {[0, 1, 2, 3, 4, 5].map((index) => {
+              {Array.from({ length: expectedLength }).map((_, index) => {
                 const isFilled = index < pin.length;
                 return (
                   <div
@@ -117,15 +121,15 @@ export const PinLockModal: React.FC<PinLockModalProps> = ({
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="password"
-                maxLength={6}
+                maxLength={expectedLength}
                 autoFocus
-                placeholder="Enter 6-digit PIN"
+                placeholder={`Enter ${expectedLength}-digit PIN`}
                 value={pin}
                 onChange={(e) => {
                   setError(false);
-                  const clean = e.target.value.replace(/\D/g, '').slice(0, 6);
+                  const clean = e.target.value.replace(/\D/g, '').slice(0, expectedLength);
                   setPin(clean);
-                  if (clean.length === 6) {
+                  if (clean.length === expectedLength) {
                     handleVerify(clean);
                   }
                 }}

@@ -48,6 +48,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [selectedStaffModal, setSelectedStaffModal] = useState<StaffMember | null>(null);
+  const [commissionRate, setCommissionRate] = useState<number>(10); // Standard 10% salon commission rate
 
   // Timeframe configurations
   const timeframeConfig: {
@@ -73,33 +74,57 @@ export const StaffTab: React.FC<StaffTabProps> = ({
     });
 
     return staffMembers.map((staff) => {
-      // Find orders served by this staff member
-      const staffOrders = periodOrders.filter(
-        (o) => (o.staffName || '').toLowerCase() === staff.name.toLowerCase()
-      );
+      // Accurately credit each employee ONLY for the specific services they performed
+      const staffRecords: StaffServiceRecord[] = [];
+      let totalSales = 0;
+      let servicesCount = 0;
+      let invoiceCount = 0;
 
-      // Aggregate revenue and service count
-      const totalSales = staffOrders.reduce((sum, o) => sum + (o.total || 0), 0);
-      const servicesCount = staffOrders.reduce(
-        (sum, o) => sum + (o.items ? o.items.reduce((s, i) => s + i.quantity, 0) : 1),
-        0
-      );
+      periodOrders.forEach((o) => {
+        // Find items in this order assigned to this specific staff member
+        const staffItems = (o.items || []).filter((i) => {
+          if (i.stylistName) {
+            return i.stylistName.trim().toLowerCase() === staff.name.trim().toLowerCase();
+          }
+          if (o.staffName) {
+            const splitNames = o.staffName.split(',').map((s) => s.trim().toLowerCase());
+            return splitNames.includes(staff.name.trim().toLowerCase());
+          }
+          return false;
+        });
 
-      // Invoices count
-      const invoiceCount = staffOrders.length;
+        if (staffItems.length > 0) {
+          invoiceCount++;
+          const orderGross = (o.items || []).reduce((s, it) => s + it.service.price * it.quantity, 0);
+          const staffGross = staffItems.reduce((s, it) => s + it.service.price * it.quantity, 0);
+          const creditedAmount =
+            orderGross > 0 ? Math.round((staffGross / orderGross) * o.total) : staffGross;
+          const count = staffItems.reduce((s, it) => s + it.quantity, 0);
 
-      // Extract service records for modal
-      const records: StaffServiceRecord[] = staffOrders.map((o, idx) => ({
-        id: `ord-rec-${o.id}-${idx}`,
-        date: o.date,
-        clientName: o.clientName || 'Walk-in Client',
-        serviceName: o.items && o.items.length > 0 ? o.items.map((i) => `${i.service.name}${i.quantity > 1 ? ` (x${i.quantity})` : ''}`).join(', ') : 'Salon Service',
-        amount: o.total,
-      }));
+          totalSales += creditedAmount;
+          servicesCount += count;
+
+          staffRecords.push({
+            id: `ord-rec-${o.id}-${staff.name}`,
+            date: o.date,
+            clientName: o.clientName || 'Walk-in Client',
+            serviceName: staffItems
+              .map((i) => `${i.service.name}${i.quantity > 1 ? ` (x${i.quantity})` : ''}`)
+              .join(', '),
+            amount: creditedAmount,
+          });
+        }
+      });
+
+      const historyList: StaffServiceRecord[] = Array.isArray(staff.history)
+        ? staff.history
+        : typeof staff.history === 'object' && staff.history !== null
+        ? (Object.values(staff.history) as StaffServiceRecord[])
+        : [];
 
       // Fallback: If no orders in live ledger yet, check staff.history
-      if (staffOrders.length === 0 && staff.history && staff.history.length > 0) {
-        const historyInPeriod = staff.history.filter((h) => {
+      if (staffRecords.length === 0 && historyList.length > 0) {
+        const historyInPeriod = historyList.filter((h) => {
           const ts = parseDateToTimestamp(h.date);
           return ts >= start && ts <= end;
         });
@@ -118,7 +143,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
         periodSales: totalSales,
         servicesCount,
         invoiceCount,
-        periodRecords: records,
+        periodRecords: staffRecords,
       };
     });
   }, [staffMembers, orders, selectedTimeframe]);
@@ -226,6 +251,41 @@ export const StaffTab: React.FC<StaffTabProps> = ({
         </div>
       </div>
 
+      {/* Commission Rate Configurator Bar */}
+      <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-800 flex items-center justify-center font-bold text-sm">
+            %
+          </div>
+          <div>
+            <span className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+              Stylist Commission Calculation
+            </span>
+            <span className="text-[11px] text-slate-500">
+              Calculate accurate stylist commissions based exclusively on services each staff performed
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 p-1 rounded-xl">
+          <span className="text-[11px] font-semibold text-slate-500 px-1.5">Rate:</span>
+          {[5, 10, 15, 20].map((rate) => (
+            <button
+              key={rate}
+              type="button"
+              onClick={() => setCommissionRate(rate)}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                commissionRate === rate
+                  ? 'bg-amber-700 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+              }`}
+            >
+              {rate}%
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs">
@@ -309,7 +369,17 @@ export const StaffTab: React.FC<StaffTabProps> = ({
               <div className="text-2xl font-bold text-slate-900 tracking-tight">
                 {currencySymbol}{staff.periodSales.toLocaleString('en-IN')}
               </div>
-              <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100 text-slate-600">
+              {/* Commission Calculation Display */}
+              <div className="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg bg-amber-50/80 border border-amber-200/80 text-amber-900">
+                <span className="font-semibold flex items-center gap-1">
+                  <span>💼</span>
+                  <span>Est. Commission ({commissionRate}%):</span>
+                </span>
+                <span className="font-extrabold text-amber-950">
+                  {currencySymbol}{Math.round((staff.periodSales * commissionRate) / 100).toLocaleString('en-IN')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100 text-slate-600">
                 <span>Services Completed:</span>
                 <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
                   {staff.servicesCount} {staff.servicesCount === 1 ? 'service' : 'services'}
@@ -327,14 +397,17 @@ export const StaffTab: React.FC<StaffTabProps> = ({
           <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 relative animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-700">Staff Service History</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-700">Staff Service History &amp; Commission</span>
                 <h3 className="text-xl font-bold text-slate-900">{modalStaffDetails.name}</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Total Sales in <span className="font-semibold capitalize text-slate-800">{selectedTimeframe === 'daily' ? "Today's Sales" : `${selectedTimeframe} Sales`}</span>:{' '}
-                  <span className="font-bold text-slate-900">
-                    {currencySymbol}{modalStaffDetails.periodSales.toLocaleString('en-IN')}
+                <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
+                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-medium">
+                    Credited Sales ({selectedTimeframe === 'daily' ? "Today" : selectedTimeframe}):{' '}
+                    <strong className="text-slate-900 font-bold">{currencySymbol}{modalStaffDetails.periodSales.toLocaleString('en-IN')}</strong>
                   </span>
-                </p>
+                  <span className="bg-amber-100 text-amber-950 px-2 py-0.5 rounded-md font-bold border border-amber-300">
+                    Commission ({commissionRate}%): {currencySymbol}{Math.round((modalStaffDetails.periodSales * commissionRate) / 100).toLocaleString('en-IN')}
+                  </span>
+                </div>
               </div>
               <button
                 type="button"

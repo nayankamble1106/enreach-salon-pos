@@ -2,23 +2,47 @@ import { Order } from '../types';
 import { formatIndianDateTime } from './dateUtils';
 
 export const GOOGLE_REVIEW_URL = 'https://g.page/r/CXUEjEbv1ulJEBM/review';
-export const SALON_OWNER_NUMBER = '+91 88067 67186';
+export const SALON_OWNER_NUMBER = '+91 88067 67186 / +91 70206 78366';
+
+/**
+ * Combines all unique staff members involved across items in an order into a clean comma-separated list
+ * Example: "Vishal sir, Aman"
+ */
+export function getUniqueStaffNames(order: Order | null | undefined): string {
+  if (!order) return 'Kunal';
+  const staffSet = new Set<string>();
+
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    order.items.forEach((item) => {
+      const name = item.stylistName?.trim();
+      if (name) staffSet.add(name);
+    });
+  }
+
+  if (staffSet.size === 0 && order.staffName) {
+    order.staffName.split(',').forEach((s) => {
+      const trimmed = s.trim();
+      if (trimmed) staffSet.add(trimmed);
+    });
+  }
+
+  const list = Array.from(staffSet);
+  return list.length > 0 ? list.join(', ') : order.staffName || 'Kunal';
+}
 
 export function formatWhatsAppReceiptMessage(order: Order): string {
   const clientName = order.clientName?.trim() || 'Valued Client';
   const clientPhone = order.clientPhone?.trim() || 'N/A';
-  const staffName = order.staffName || 'Kunal';
+  const staffName = getUniqueStaffNames(order);
 
   // Format Date and Time in strict Indian Standard Format DD/MM/YYYY | hh:mm AM/PM
   const dateTimeStr = formatIndianDateTime(order.date);
 
-  // Format items list
+  // Format items list without individual prices as clean bullet points
   const servicesList = order.items
     .map(
       (item) =>
-        `• ${item.service.name}${item.quantity > 1 ? ` (x${item.quantity})` : ''} - ₹${(
-          item.service.price * item.quantity
-        ).toLocaleString('en-IN')}`
+        `• ${item.service.name}${item.quantity > 1 ? ` (x${item.quantity})` : ''}`
     )
     .join('\n');
 
@@ -27,23 +51,29 @@ export function formatWhatsAppReceiptMessage(order: Order): string {
     upi: 'UPI / QR',
     card: 'Card / POS',
     cash: 'Cash',
+    'loyalty member pass': 'Loyalty Member Pass',
+    'loyalty_pass': 'Loyalty Member Pass',
   };
-  const paymentMode = paymentModeMap[order.paymentMethod?.toLowerCase()] || order.paymentMethod?.toUpperCase() || 'UPI';
+  const paymentMode =
+    paymentModeMap[order.paymentMethod?.toLowerCase()] ||
+    (order.paymentMethod === 'Loyalty Member Pass' ? 'Loyalty Member Pass' : order.paymentMethod?.toUpperCase()) ||
+    'UPI / QR';
+
+  const notesLine = order.notes ? `📝 *Notes:* ${order.notes}\n` : '';
 
   // Subtotal and Dynamic Discount
   const subtotalFormatted = order.subtotal.toLocaleString('en-IN');
   const finalAmountFormatted = order.total.toLocaleString('en-IN');
 
   const discountPercent = order.discountPercentage ?? 0;
+  const calculatedDiscount = Math.max(0, Math.round((order.subtotal * discountPercent) / 100));
+  const discountAmount = calculatedDiscount > 0 ? calculatedDiscount : Math.max(0, order.subtotal - order.total);
+
   let discountLine = '';
-  if (discountPercent > 0) {
-    const discountAmount = Math.max(0, Math.round((order.subtotal * discountPercent) / 100));
+  if (discountPercent > 0 || discountAmount > 0) {
+    const displayPercent = discountPercent > 0 ? discountPercent : (order.subtotal > 0 ? Math.round((discountAmount / order.subtotal) * 100) : 0);
     const discountAmountFormatted = discountAmount.toLocaleString('en-IN');
-    if (order.isMember) {
-      discountLine = `⭐ *VIP Member Discount (${discountPercent}%):* -₹${discountAmountFormatted}\n`;
-    } else {
-      discountLine = `🏷️ *Special Discount (${discountPercent}%):* -₹${discountAmountFormatted}\n`;
-    }
+    discountLine = `🏷️ *Special Discount (${displayPercent}%):* -₹${discountAmountFormatted}\n`;
   }
 
   return `✨ *ENREACH UNISEX SALON* ✨
@@ -63,6 +93,7 @@ ${servicesList}
 💵 *Subtotal:* ₹${subtotalFormatted}
 ${discountLine}💰 *Final Amount Paid:* ₹${finalAmountFormatted}
 💳 *Payment Mode:* ${paymentMode}
+${notesLine}
 
 ━━━━━━━━━━━━━━━━━━━
 ⭐ *RATE YOUR EXPERIENCE:*
@@ -76,13 +107,12 @@ Thank you for visiting Enreach Unisex Salon! We look forward to serving you agai
 ━━━━━━━━━━━━━━━━━━━`;
 }
 
-
 export function getWhatsAppReceiptUrl(order: Order): string {
   const message = formatWhatsAppReceiptMessage(order);
   const encodedText = encodeURIComponent(message);
 
   const cleanPhone = (order.clientPhone || '').replace(/\D/g, '');
-  
+
   // If standard 10 digit Indian number without country code
   let targetPhone = '';
   if (cleanPhone.length === 10) {
