@@ -48,7 +48,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [selectedStaffModal, setSelectedStaffModal] = useState<StaffMember | null>(null);
-  const [commissionRate, setCommissionRate] = useState<number>(10); // Standard 10% salon commission rate
+  const [commissionRate, setCommissionRate] = useState<number>(0); // 0% (Default) stylist commission rate
 
   // Timeframe configurations
   const timeframeConfig: {
@@ -269,7 +269,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
 
         <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 p-1 rounded-xl">
           <span className="text-[11px] font-semibold text-slate-500 px-1.5">Rate:</span>
-          {[5, 10, 15, 20].map((rate) => (
+          {[0, 5, 10, 15, 20].map((rate) => (
             <button
               key={rate}
               type="button"
@@ -280,7 +280,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white'
               }`}
             >
-              {rate}%
+              {rate === 0 ? '0% (Default)' : `${rate}%`}
             </button>
           ))}
         </div>

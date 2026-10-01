@@ -18,6 +18,9 @@ import {
   Database,
   RefreshCw,
   CheckCircle2,
+  X,
+  Scissors,
+  Phone,
 } from 'lucide-react';
 import { getWhatsAppReceiptUrl } from '../utils/whatsappReceipt';
 import { sortOrdersDescending } from '../utils/orderUtils';
@@ -54,8 +57,12 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [searchTerm, setSearchTerm] = useState('');
   const [showConfigModal, setShowConfigModal] = useState(false);
-
-
+  const [selectedBreakdown, setSelectedBreakdown] = useState<{
+    title: string;
+    subtitle: string;
+    orders: Order[];
+  } | null>(null);
+  const [breakdownSearchQuery, setBreakdownSearchQuery] = useState('');
 
   // Dynamically filter invoices by strict calendar-based timeframe
   const timeframeOrders = useMemo(() => {
@@ -125,6 +132,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
         ...slot,
         count: inSlot.length,
         revenue,
+        orders: sortOrdersDescending(inSlot),
       };
     });
   }, [orders]);
@@ -154,6 +162,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
         count: matchedBills.length,
         revenue,
         isToday: formatIndianDate(dayDate) === formatIndianDate(now),
+        orders: sortOrdersDescending(matchedBills),
       };
     });
   }, [orders]);
@@ -163,6 +172,10 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
     const months = [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    const monthFullNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
     ];
     const currentYear = new Date().getFullYear();
     const currentMonthIdx = new Date().getMonth();
@@ -179,10 +192,12 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
       const revenue = matchedBills.reduce((sum, o) => sum + o.total, 0);
       return {
         monthName: mName,
+        monthFullName: monthFullNames[mIdx],
         monthNumber: mIdx + 1,
         count: matchedBills.length,
         revenue,
         isCurrentMonth: mIdx === currentMonthIdx,
+        orders: sortOrdersDescending(matchedBills),
       };
     });
   }, [orders]);
@@ -211,9 +226,27 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
         name: q.name,
         count: matchedBills.length,
         revenue,
+        orders: sortOrdersDescending(matchedBills),
       };
     });
   }, [orders]);
+
+  // Filtered orders inside Drill-Down Modal
+  const modalFilteredOrders = useMemo(() => {
+    if (!selectedBreakdown) return [];
+    const q = breakdownSearchQuery.toLowerCase().trim();
+    if (!q) return selectedBreakdown.orders;
+    return selectedBreakdown.orders.filter((ord) => {
+      const matchesClient = ord.clientName?.toLowerCase().includes(q);
+      const matchesPhone = ord.clientPhone?.toLowerCase().includes(q);
+      const matchesId = ord.id?.toLowerCase().includes(q);
+      const matchesStaff = ord.staffName?.toLowerCase().includes(q);
+      const matchesServices =
+        Array.isArray(ord.items) &&
+        ord.items.some((it) => it.service.name.toLowerCase().includes(q) || (it.stylistName && it.stylistName.toLowerCase().includes(q)));
+      return matchesClient || matchesPhone || matchesId || matchesStaff || matchesServices;
+    });
+  }, [selectedBreakdown, breakdownSearchQuery]);
 
   const timeframeConfig: {
     id: SalesTimeframe;
@@ -388,7 +421,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Today&apos;s Time-Slot Breakdown</span>
+                  <span>Today&apos;s Time-Slot Breakdown (Click to Inspect)</span>
                 </span>
                 <span className="text-[11px] text-slate-400">Date: {formatIndianDate(new Date())}</span>
               </div>
@@ -396,11 +429,19 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
                 {todayBreakdown.map((slot) => (
                   <div
                     key={slot.name}
-                    className="p-3 bg-slate-50 rounded-xl border border-slate-200/90 flex flex-col justify-between"
+                    onClick={() =>
+                      setSelectedBreakdown({
+                        title: `Today's ${slot.name} Sales Breakdown`,
+                        subtitle: `${slot.timeRange} • ${slot.count} ${slot.count === 1 ? 'bill' : 'bills'} (${currencySymbol}${slot.revenue.toLocaleString('en-IN')})`,
+                        orders: slot.orders,
+                      })
+                    }
+                    className="p-3 bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 hover:shadow-sm rounded-xl border border-slate-200/90 flex flex-col justify-between cursor-pointer transition-all active:scale-98 group"
+                    title="Click to view all bills in this time slot"
                   >
                     <div>
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-900">{slot.name}</span>
+                        <span className="text-xs font-bold text-slate-900 group-hover:text-amber-950">{slot.name}</span>
                         <span className="text-[10px] font-semibold text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200">
                           {slot.count} {slot.count === 1 ? 'Bill' : 'Bills'}
                         </span>
@@ -409,7 +450,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
                     </div>
                     <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between">
                       <span className="text-[10px] text-slate-500 font-medium">Revenue</span>
-                      <span className="text-sm font-bold text-slate-900">
+                      <span className="text-sm font-bold text-slate-900 group-hover:text-amber-900">
                         {currencySymbol}{slot.revenue.toLocaleString('en-IN')}
                       </span>
                     </div>
@@ -425,7 +466,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Weekly Day-Wise Breakdown (Mon - Sun)</span>
+                  <span>Weekly Day-Wise Breakdown (Click Any Day)</span>
                 </span>
                 <span className="text-[11px] text-slate-400">Current Calendar Week</span>
               </div>
@@ -433,11 +474,19 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
                 {weeklyBreakdown.map((day) => (
                   <div
                     key={day.dayName}
-                    className={`p-2.5 rounded-xl border flex flex-col justify-between transition-colors ${
+                    onClick={() =>
+                      setSelectedBreakdown({
+                        title: `${day.dayName} Sales Breakdown (${day.formattedDate})`,
+                        subtitle: `${day.count} ${day.count === 1 ? 'bill' : 'bills'} processed • Total: ${currencySymbol}${day.revenue.toLocaleString('en-IN')}`,
+                        orders: day.orders,
+                      })
+                    }
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between transition-all cursor-pointer active:scale-98 hover:shadow-sm ${
                       day.isToday
-                        ? 'bg-amber-50/90 border-amber-300 ring-1 ring-amber-400/50'
-                        : 'bg-slate-50 border-slate-200'
+                        ? 'bg-amber-50/90 border-amber-300 ring-1 ring-amber-400/50 hover:bg-amber-100/80'
+                        : 'bg-slate-50 border-slate-200 hover:bg-amber-50/60 hover:border-amber-400'
                     }`}
+                    title={`Click to view all bills for ${day.dayName}`}
                   >
                     <div>
                       <div className="flex items-center justify-between">
@@ -468,13 +517,13 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
             </div>
           )}
 
-          {/* 3. Monthly Sales Breakdown: Jan to Dec - ALWAYS DIRECTLY VISIBLE */}
+          {/* 3. Monthly Sales Breakdown: Jan to Dec - CLICKABLE FOR ALL 12 MONTHS */}
           {selectedTimeframe === 'monthly' && (
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                   <BarChart3 className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Monthly Breakdown for Calendar Year {new Date().getFullYear()}</span>
+                  <span>Monthly Breakdown (Click Any Month for Invoices)</span>
                 </span>
                 <span className="text-[11px] text-slate-400">All 12 Calendar Months</span>
               </div>
@@ -482,11 +531,19 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
                 {monthlyBreakdown.map((m) => (
                   <div
                     key={m.monthName}
-                    className={`p-2 rounded-xl border text-center flex flex-col justify-between ${
+                    onClick={() =>
+                      setSelectedBreakdown({
+                        title: `${m.monthFullName} Sales Breakdown`,
+                        subtitle: `Calendar Year ${new Date().getFullYear()} • ${m.count} ${m.count === 1 ? 'bill' : 'bills'} totaling ${currencySymbol}${m.revenue.toLocaleString('en-IN')}`,
+                        orders: m.orders,
+                      })
+                    }
+                    className={`p-2 rounded-xl border text-center flex flex-col justify-between transition-all cursor-pointer active:scale-95 hover:shadow-md hover:border-amber-400 ${
                       m.isCurrentMonth
-                        ? 'bg-amber-50 border-amber-300 ring-1 ring-amber-400/50'
-                        : 'bg-slate-50 border-slate-200'
+                        ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-400/60 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 hover:bg-amber-50/70'
                     }`}
+                    title={`Click to inspect all sales for ${m.monthFullName}`}
                   >
                     <span className={`text-xs font-bold ${m.isCurrentMonth ? 'text-amber-950' : 'text-slate-800'}`}>
                       {m.monthName}
@@ -509,16 +566,27 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Quarterly Breakdown for Calendar Year {new Date().getFullYear()}</span>
+                  <span>Quarterly Breakdown (Click Any Quarter)</span>
                 </span>
                 <span className="text-[11px] text-slate-400">Annual Summary</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {yearlyBreakdown.map((q) => (
-                  <div key={q.name} className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                    <span className="text-xs font-bold text-slate-900 block">{q.name}</span>
+                  <div
+                    key={q.name}
+                    onClick={() =>
+                      setSelectedBreakdown({
+                        title: `${q.name} Sales Breakdown`,
+                        subtitle: `${q.count} invoices processed • Total Revenue: ${currencySymbol}${q.revenue.toLocaleString('en-IN')}`,
+                        orders: q.orders,
+                      })
+                    }
+                    className="p-3 bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 rounded-xl border border-slate-200 cursor-pointer transition-all active:scale-98 hover:shadow-xs group"
+                    title={`Click to inspect all bills for ${q.name}`}
+                  >
+                    <span className="text-xs font-bold text-slate-900 group-hover:text-amber-950 block">{q.name}</span>
                     <span className="text-[10px] text-slate-400 block mt-0.5">{q.count} invoices processed</span>
-                    <div className="mt-2 pt-2 border-t border-slate-200 text-sm font-extrabold text-slate-900">
+                    <div className="mt-2 pt-2 border-t border-slate-200 text-sm font-extrabold text-slate-900 group-hover:text-amber-900">
                       {currencySymbol}{q.revenue.toLocaleString('en-IN')}
                     </div>
                   </div>
@@ -530,37 +598,63 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
       </div>
 
 
-      {/* 3 Calculated Metrics Display Cards */}
+      {/* 3 Calculated Metrics Display Cards - Clickable for Instant Period Drill-Down */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {/* Total Revenue */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs">
+        <div
+          onClick={() =>
+            setSelectedBreakdown({
+              title: `${selectedTimeframe.toUpperCase()} Total Revenue Breakdown`,
+              subtitle: `Settled gross across ${totalInvoiceCount} ${totalInvoiceCount === 1 ? 'bill' : 'bills'}`,
+              orders: timeframeOrders,
+            })
+          }
+          className="bg-white border border-slate-200/80 hover:border-amber-400 rounded-2xl p-4 shadow-xs cursor-pointer transition-all active:scale-98 group"
+          title="Click to view detailed list of all bills in this period"
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Revenue</span>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-amber-800">
+              Total Revenue
+            </span>
             <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-800 flex items-center justify-center">
               <Wallet className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-black text-slate-900 mt-2">
+          <div className="text-2xl font-black text-slate-900 group-hover:text-amber-950 mt-2">
             {currencySymbol}{totalRevenue.toLocaleString('en-IN')}
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Settled gross for <strong className="text-slate-600 capitalize">{selectedTimeframe === 'daily' ? "Today's" : selectedTimeframe}</strong> period
+          <p className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+            <span>Settled gross for <strong className="text-slate-600 capitalize">{selectedTimeframe === 'daily' ? "Today's" : selectedTimeframe}</strong></span>
+            <span className="text-amber-700 font-semibold text-[10px] group-hover:underline">Inspect &rarr;</span>
           </p>
         </div>
 
         {/* Total Invoices */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs">
+        <div
+          onClick={() =>
+            setSelectedBreakdown({
+              title: `${selectedTimeframe.toUpperCase()} Invoice Stream Breakdown`,
+              subtitle: `${totalInvoiceCount} total transactions in period`,
+              orders: timeframeOrders,
+            })
+          }
+          className="bg-white border border-slate-200/80 hover:border-blue-400 rounded-2xl p-4 shadow-xs cursor-pointer transition-all active:scale-98 group"
+          title="Click to view detailed list of all invoices"
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Invoices</span>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-blue-800">
+              Total Invoices
+            </span>
             <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center">
               <Receipt className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-black text-slate-900 mt-2">
+          <div className="text-2xl font-black text-slate-900 group-hover:text-blue-950 mt-2">
             {totalInvoiceCount} {totalInvoiceCount === 1 ? 'Bill' : 'Bills'}
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Invoices generated in <strong className="text-slate-600 capitalize">{selectedTimeframe === 'daily' ? "Today's" : selectedTimeframe}</strong>
+          <p className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+            <span>Generated in <strong className="text-slate-600 capitalize">{selectedTimeframe === 'daily' ? "Today's" : selectedTimeframe}</strong></span>
+            <span className="text-blue-700 font-semibold text-[10px] group-hover:underline">Inspect &rarr;</span>
           </p>
         </div>
 
@@ -719,6 +813,194 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
           }
         }}
       />
+
+      {/* DETAILED SALES BREAKDOWN DRILL-DOWN MODAL */}
+      {selectedBreakdown && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-slate-200 relative animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-3.5 border-b border-slate-200 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shadow-md shrink-0">
+                  <BarChart3 className="w-5 h-5 font-bold" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
+                    {selectedBreakdown.title}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {selectedBreakdown.subtitle}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBreakdown(null);
+                  setBreakdownSearchQuery('');
+                }}
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Metrics & Filter Bar */}
+            <div className="py-3 shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/70 -mx-4 sm:-mx-6 px-4 sm:px-6 border-b border-slate-200">
+              <div className="flex items-center gap-2 sm:gap-4 text-xs font-semibold text-slate-700">
+                <span className="bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+                  Total Bills: <strong className="text-slate-900">{selectedBreakdown.orders.length}</strong>
+                </span>
+                <span className="bg-amber-50 border border-amber-200 text-amber-900 px-2.5 py-1 rounded-lg">
+                  Total Sales: <strong className="text-amber-950">{currencySymbol}{selectedBreakdown.orders.reduce((sum, o) => sum + o.total, 0).toLocaleString('en-IN')}</strong>
+                </span>
+              </div>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Filter within this period..."
+                  value={breakdownSearchQuery}
+                  onChange={(e) => setBreakdownSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Modal Orders List */}
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 -mx-4 sm:-mx-6 px-4 sm:px-6">
+              {modalFilteredOrders.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <Receipt className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                  <p className="font-semibold text-slate-600 text-sm">No transactions found</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {breakdownSearchQuery
+                      ? `No bills match query "${breakdownSearchQuery}" in this selected period.`
+                      : 'No customer orders have been finalized in this period yet.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {modalFilteredOrders.map((order) => (
+                    <div
+                      key={order.id}
+                      className="py-3 sm:py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 -mx-4 sm:-mx-6 px-4 sm:px-6 transition-colors"
+                    >
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-800 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200">
+                          {order.id}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-900 text-sm">{order.clientName || 'Walk-in Client'}</span>
+                            {order.clientPhone && (
+                              <span className="text-xs text-slate-500 font-mono flex items-center gap-1">
+                                <Phone className="w-3 h-3 text-slate-400" />
+                                <span>{order.clientPhone}</span>
+                              </span>
+                            )}
+                            {order.isMember && (
+                              <span className="text-[10px] bg-amber-100 text-amber-900 font-extrabold px-1.5 py-0.2 rounded border border-amber-300">
+                                VIP Member
+                              </span>
+                            )}
+                            {order.paymentMethod && (
+                              <span className="text-[10px] bg-slate-100 text-slate-700 font-semibold px-1.5 py-0.2 rounded capitalize">
+                                {order.paymentMethod}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Rendered Services */}
+                          <div className="text-xs text-slate-600 mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-slate-700">Services:</span>
+                            {order.items && order.items.length > 0 ? (
+                              order.items.map((it, idx) => (
+                                <span
+                                  key={idx}
+                                  className="inline-flex items-center gap-1 bg-white border border-slate-200 px-1.5 py-0.5 rounded text-[11px] text-slate-800"
+                                >
+                                  <Scissors className="w-3 h-3 text-amber-600" />
+                                  <span>{it.service.name}{it.quantity > 1 ? ` (x${it.quantity})` : ''}</span>
+                                  {it.stylistName && (
+                                    <span className="text-[10px] text-slate-400">({it.stylistName})</span>
+                                  )}
+                                </span>
+                              ))
+                            ) : (
+                              <span>Salon Services</span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="w-3 h-3" />
+                              <span>{formatIndianDateTime(order.date)}</span>
+                            </span>
+                            {order.staffName && (
+                              <span className="flex items-center gap-1">
+                                <User className="w-3 h-3 text-slate-400" />
+                                <span>Staff: {order.staffName}</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Price & Receipt Action */}
+                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                        <div className="text-left sm:text-right">
+                          <span className="text-[10px] text-slate-400 uppercase font-semibold block">Total</span>
+                          <span className="text-base font-black text-slate-900">
+                            {currencySymbol}{order.total.toLocaleString('en-IN')}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => onViewReceipt(order)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer shadow-xs transition-colors"
+                          >
+                            <Receipt className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Bill</span>
+                          </button>
+                          <a
+                            href={getWhatsAppReceiptUrl(order)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold cursor-pointer transition-colors shadow-xs"
+                            title="Send Receipt on WhatsApp"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 text-[#25D366] fill-[#25D366]" />
+                            <span className="hidden sm:inline">WhatsApp</span>
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-slate-200 shrink-0 flex items-center justify-between text-xs text-slate-500">
+              <span>Showing {modalFilteredOrders.length} of {selectedBreakdown.orders.length} transactions</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBreakdown(null);
+                  setBreakdownSearchQuery('');
+                }}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Close Breakdown
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
