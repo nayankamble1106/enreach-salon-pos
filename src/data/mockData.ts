@@ -18,7 +18,7 @@ export const SALON_SERVICES: SalonService[] = [
   { id: "cs4", name: "Hairstyling", category: "Common Services", price: 700 },
   { id: "cs5", name: "Blow Dry", category: "Common Services", price: 300 },
   { id: "cs6", name: "Head Massage", category: "Common Services", price: 700 },
-  { id: "cs7", name: "Eye Brow", category: "Common Services", price: 50 },
+  { id: "cs7", name: "Eyebrow", category: "Common Services", price: 70 },
 
   // 2. Hair Services
   { id: "hs1", name: "Creative Hair Cut (Female)", category: "Hair Services", price: 500 },
@@ -39,25 +39,25 @@ export const SALON_SERVICES: SalonService[] = [
   { id: "hs16", name: "Hair Styling (Female)", category: "Hair Services", price: 500 },
 
   // 3. Beauty Services
-  { id: "bs1", name: "Eyebrow (Female)", category: "Beauty Services", price: 50 },
-  { id: "bs2", name: "Eyebrow (Male)", category: "Beauty Services", price: 60 },
+  { id: "bs1", name: "Eyebrow", category: "Beauty Services", price: 70 },
+  { id: "bs2", name: "Male Eyebrow", category: "Beauty Services", price: 70 },
   { id: "bs3", name: "Jawline (Female)", category: "Beauty Services", price: 100 },
   { id: "bs4", name: "Face (Female)", category: "Beauty Services", price: 150 },
   { id: "bs5", name: "Face (Male)", category: "Beauty Services", price: 100 },
   { id: "bs6", name: "Chin / Forehead (Female)", category: "Beauty Services", price: 20 },
   { id: "bs7", name: "Chin / Forehead (Male)", category: "Beauty Services", price: 20 },
-  { id: "bs8", name: "Lowerlips / Upper Lips (Female)", category: "Beauty Services", price: 20 },
+  { id: "bs8", name: "Eyebrow & Upperlips", category: "Beauty Services", price: 100 },
   { id: "bs9", name: "Lowerlips / Upper Lips (Male)", category: "Beauty Services", price: 20 },
 
   // 4. Waxing / Bleach
-  { id: "wb1", name: "Under Arms", category: "Waxing / Bleach", price: 300 },
-  { id: "wb2", name: "Full Arms", category: "Waxing / Bleach", price: 400 },
+  { id: "wb1", name: "Only Underarms Wax", category: "Waxing / Bleach", price: 200 },
+  { id: "wb2", name: "Full Hand Wax", category: "Waxing / Bleach", price: 500 },
   { id: "wb3", name: "Half Arms", category: "Waxing / Bleach", price: 300 },
-  { id: "wb4", name: "Full Legs", category: "Waxing / Bleach", price: 600 },
-  { id: "wb5", name: "Half Legs", category: "Waxing / Bleach", price: 500 },
+  { id: "wb4", name: "Full Legs Wax", category: "Waxing / Bleach", price: 1000 },
+  { id: "wb5", name: "Half Leg Wax", category: "Waxing / Bleach", price: 700 },
   { id: "wb6", name: "Full Front", category: "Waxing / Bleach", price: 600 },
   { id: "wb7", name: "Full Back", category: "Waxing / Bleach", price: 600 },
-  { id: "wb8", name: "Full Body", category: "Waxing / Bleach", price: 2500 },
+  { id: "wb8", name: "Full Body Wax", category: "Waxing / Bleach", price: 3500 },
   { id: "wb9", name: "Full Bikini", category: "Waxing / Bleach", price: 1200 },
   { id: "wb10", name: "Butts", category: "Waxing / Bleach", price: 400 },
   { id: "wb11", name: "Face Neck", category: "Waxing / Bleach", price: 400 },
@@ -85,7 +85,7 @@ export const SALON_SERVICES: SalonService[] = [
   { id: "bf2", name: "O2C2", category: "Bridal Facial", price: 3500 },
   { id: "bf3", name: "Snowy", category: "Bridal Facial", price: 3000 },
   { id: "bf4", name: "BB Glow", category: "Bridal Facial", price: 3500 },
-  { id: "bf5", name: "Hydra Moist", category: "Bridal Facial", price: 3500 },
+  { id: "bf5", name: "Hydrafacial", category: "Bridal Facial", price: 4000 },
 
   // 9. Skin Polishing
   { id: "sp1", name: "Body Scrub", category: "Skin Polishing", price: 2000 },
@@ -95,9 +95,11 @@ export const SALON_SERVICES: SalonService[] = [
 
   // 10. Skin Services
   { id: "ss1", name: "Clean up", category: "Skin Services", price: 600 },
-  { id: "ss2", name: "D-tan (Raaga + O3)", category: "Skin Services", price: 1000 },
-  { id: "ss3", name: "Fruit", category: "Skin Services", price: 700 },
+  { id: "ss2", name: "O3 Detan", category: "Skin Services", price: 800 },
+  { id: "ss3", name: "Fruit Cleanup", category: "Skin Services", price: 1000 },
   { id: "ss4", name: "O3 + Whitening", category: "Skin Services", price: 1000 },
+  { id: "ss5", name: "Face Massage", category: "Skin Services", price: 400 },
+  { id: "ss6", name: "Hydrafacial", category: "Skin Services", price: 4000 },
 
   // 11. Ironing / Tongs / Iron Curls
   { id: "it1", name: "Upto Shoulder", category: "Ironing / Tongs / Iron Curls", price: 600 },
@@ -133,26 +135,27 @@ export const SALON_SERVICES: SalonService[] = [
   // 14. Hair Treatment
   { id: "ht1", name: "Hair Spa Regular (Female)", category: "Hair Treatment", price: 1500 },
   { id: "ht2", name: "Hair Spa Regular (Male)", category: "Hair Treatment", price: 1000 },
-  { id: "ht3", name: "Keratin Spa (Female)", category: "Hair Treatment", price: 2000 },
+  { id: "ht3", name: "Keratin Spa", category: "Hair Treatment", price: 2500 },
   { id: "ht4", name: "Keratin Spa (Male)", category: "Hair Treatment", price: 1200 },
   { id: "ht5", name: "Anti Dandruff (Female)", category: "Hair Treatment", price: 2500 },
   { id: "ht6", name: "Anti Dandruff (Male)", category: "Hair Treatment", price: 1500 },
   { id: "ht7", name: "Anti Hairfall (Female)", category: "Hair Treatment", price: 1800 },
   { id: "ht8", name: "Anti Hairfall (Male)", category: "Hair Treatment", price: 1500 },
+  { id: "ht9", name: "Nanoplastia", category: "Hair Treatment", price: 7000 },
 
   // 15. Hand & Foot Service
-  { id: "hf1", name: "Regular Manicure", category: "Hand & Foot Service", price: 600 },
-  { id: "hf2", name: "Regular Pedicure", category: "Hand & Foot Service", price: 700 },
+  { id: "hf1", name: "Regular Manicure", category: "Hand & Foot Service", price: 1000 },
+  { id: "hf2", name: "Regular Pedicure", category: "Hand & Foot Service", price: 1000 },
   { id: "hf3", name: "Crystal Manicure", category: "Hand & Foot Service", price: 800 },
   { id: "hf4", name: "Crystal Pedicure", category: "Hand & Foot Service", price: 900 },
-  { id: "hf5", name: "Luxury Manicure", category: "Hand & Foot Service", price: 1000 },
+  { id: "hf5", name: "Luxury Manicure & Pedicure", category: "Hand & Foot Service", price: 1500 },
   { id: "hf6", name: "Luxury Pedicure", category: "Hand & Foot Service", price: 1200 },
 
   // 16. Makeup Services
   { id: "ms1", name: "Touch up", category: "Makeup Services", price: 1500 },
   { id: "ms2", name: "Saree Draping", category: "Makeup Services", price: 500 },
   { id: "ms3", name: "Party Makeup", category: "Makeup Services", price: 2000 },
-  { id: "ms4", name: "Bridal Makeup", category: "Makeup Services", price: 6000 },
+  { id: "ms4", name: "Bridal Makeup", category: "Makeup Services", price: 7000 },
   { id: "ms5", name: "HD Makeup", category: "Makeup Services", price: 7000 }
 ];
 

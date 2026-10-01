@@ -154,6 +154,15 @@ export default function App() {
   // Services Catalog State (Synced with Firebase Realtime Database & Cached Offline)
   const [services, setServices] = useState<SalonService[]>(() => {
     try {
+      const storedVersion = safeGetItem('backstage_services_version');
+      if (storedVersion !== 'v3_updated_services_catalog') {
+        safeSetItem('backstage_services_version', 'v3_updated_services_catalog');
+        safeSetItem('backstage_services', JSON.stringify(SALON_SERVICES));
+        if (typeof window !== 'undefined' && window.salonFirebase?.syncServicesList) {
+          window.salonFirebase.syncServicesList(SALON_SERVICES);
+        }
+        return SALON_SERVICES;
+      }
       if (typeof window !== 'undefined' && window.__salonLastFirebaseServices && window.__salonLastFirebaseServices.length > 0) {
         return window.__salonLastFirebaseServices;
       }

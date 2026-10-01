@@ -372,6 +372,24 @@
             });
           },
 
+          syncServicesList: function(servicesList) {
+            if (!Array.isArray(servicesList)) return Promise.resolve();
+            window.__salonLastFirebaseServices = servicesList;
+            try {
+              localStorage.setItem('backstage_services', JSON.stringify(servicesList));
+            } catch (e) {}
+            if (!db) return Promise.resolve();
+            const updates = {};
+            servicesList.forEach(function(s) {
+              if (s && s.id) {
+                updates[toFirebaseKey(s.id)] = s;
+              }
+            });
+            return db.ref('services').set(updates).catch(function(err) {
+              console.warn('[Firebase RTDB] services list sync warning:', err);
+            });
+          },
+
           getOrders: function() {
             return window.__salonLastFirebaseOrders || [];
           },

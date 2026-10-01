@@ -64,10 +64,14 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Extract all categories dynamically in order of appearance + custom categories
+  // Enforce Tab 1: "All", Tab 2: "Common Services", Tab 3: "Hair Services", followed by remaining categories
   const rawCategories = Array.from(
     new Set([...services.map((srv) => srv.category), ...(customCategories || [])])
   );
-  const categories = ['All', ...rawCategories];
+  const remainingCategories = rawCategories.filter(
+    (cat) => cat !== 'Common Services' && cat !== 'Hair Services'
+  );
+  const categories = ['All', 'Common Services', 'Hair Services', ...remainingCategories];
 
   // Active stylist for bill addition
   const activeStylist =

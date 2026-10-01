@@ -117,6 +117,7 @@ export interface SalonFirebaseBridge {
   syncStaffMembers: (staffList: StaffMember[]) => Promise<unknown>;
   syncStaffServiceRecord: (staffName: string, record: StaffServiceRecord) => Promise<unknown>;
   syncServices?: (servicesList: SalonService[]) => Promise<unknown>;
+  syncServicesList?: (servicesList: SalonService[]) => Promise<unknown>;
   syncServiceItem?: (service: SalonService) => Promise<unknown>;
   deleteServiceItem?: (serviceId: string) => Promise<unknown>;
   syncCategories?: (categoriesList: string[]) => Promise<unknown>;
