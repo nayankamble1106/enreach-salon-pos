@@ -7,7 +7,6 @@ export const STYLISTS: Stylist[] = [
   { id: 'staff-4', name: 'Sapna', role: 'Senior Aesthetician & Skin Expert', rating: 4.9 },
   { id: 'staff-5', name: 'Juhi', role: 'Beauty Specialist & Makeup Artist', rating: 4.8 },
   { id: 'staff-6', name: 'Vishal sir', role: 'Creative Director & Master Stylist', rating: 5.0 },
-  { id: 'staff-7', name: 'Aman', role: 'Hair Stylist & Grooming Specialist', rating: 4.9 },
 ];
 
 export const SALON_SERVICES: SalonService[] = [
@@ -201,13 +200,6 @@ export const INITIAL_STAFF: StaffMember[] = [
     id: 'staff-6',
     name: 'Vishal sir',
     role: 'Creative Director & Master Stylist',
-    totalSalesThisMonth: 0,
-    history: [],
-  },
-  {
-    id: 'staff-7',
-    name: 'Aman',
-    role: 'Hair Stylist & Grooming Specialist',
     totalSalesThisMonth: 0,
     history: [],
   },

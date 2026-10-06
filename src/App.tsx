@@ -20,9 +20,17 @@ import {
   syncMembershipToCloud,
   fetchMembershipsFromCloud,
   syncStaffServiceToCloud,
+  resetCloudOrders,
 } from './services/supabase';
 import { getNextOrderNumber, sortOrdersDescending, migrateOrdersToSequential } from './utils/orderUtils';
 import { formatIndianDate } from './utils/dateUtils';
+import {
+  purgeOnlyHistories,
+  purgeOnlyHistoriesSync,
+  purgeMembersAndLoyaltyPassesOnlySync,
+  purgeMembersAndLoyaltyPassesOnly,
+  OFFICIAL_STAFF_MEMBERS,
+} from './utils/purgeHistories';
 
 // SSR-Safe Storage Helpers for robust Vercel / Next / Vite deployment
 const safeGetItem = (key: string): string | null => {
@@ -59,7 +67,6 @@ const OFFICIAL_STAFF_NAMES = [
   'Sapna',
   'Juhi',
   'Vishal sir',
-  'Aman',
 ];
 
 const INITIAL_STAFF_MEMBERS: StaffMember[] = [
@@ -69,7 +76,6 @@ const INITIAL_STAFF_MEMBERS: StaffMember[] = [
   { id: 'staff-4', name: 'Sapna', role: 'Senior Aesthetician & Skin Expert', totalSalesThisMonth: 0, history: [] },
   { id: 'staff-5', name: 'Juhi', role: 'Beauty Specialist & Makeup Artist', totalSalesThisMonth: 0, history: [] },
   { id: 'staff-6', name: 'Vishal sir', role: 'Creative Director & Master Stylist', totalSalesThisMonth: 0, history: [] },
-  { id: 'staff-7', name: 'Aman', role: 'Hair Stylist & Grooming Specialist', totalSalesThisMonth: 0, history: [] },
 ];
 
 const INITIAL_MEMBERSHIPS: MembershipRecord[] = [];
@@ -109,9 +115,9 @@ export default function App() {
       const saved = safeGetItem('backstage_staff_performance');
       if (saved) {
         const parsed: StaffMember[] = JSON.parse(saved);
-        const hasLegacyNames = parsed.some((s) => ['Aman', 'Rahul', 'Priya', 'Vikram', 'Sneha', 'Pooja'].includes(s.name));
-        if (!hasLegacyNames && parsed.length === OFFICIAL_STAFF_NAMES.length) {
-          return parsed.map((s) => ({
+        const filtered = parsed.filter((s) => s.name !== 'Aman' && !['Rahul', 'Priya', 'Vikram', 'Sneha', 'Pooja'].includes(s.name));
+        if (filtered.length === OFFICIAL_STAFF_NAMES.length) {
+          return filtered.map((s) => ({
             ...s,
             history: Array.isArray(s.history) ? s.history : (s.history ? Object.values(s.history) : []),
           }));
@@ -309,14 +315,16 @@ export default function App() {
         const fbStaff = window.salonFirebase.getStaff();
         if (fbStaff.length > 0) {
           setStaffMembers(
-            fbStaff.map((s) => ({
-              ...s,
-              history: Array.isArray(s.history)
-                ? s.history
-                : s.history
-                ? (Object.values(s.history) as StaffServiceRecord[])
-                : [],
-            }))
+            fbStaff
+              .filter((s) => s && s.name !== 'Aman')
+              .map((s) => ({
+                ...s,
+                history: Array.isArray(s.history)
+                  ? s.history
+                  : s.history
+                  ? (Object.values(s.history) as StaffServiceRecord[])
+                  : [],
+              }))
           );
         }
         const fbServices = window.salonFirebase.getServices?.();
@@ -459,7 +467,7 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>(() => {
     try {
       if (typeof window !== 'undefined' && window.__salonLastFirebaseOrders && window.__salonLastFirebaseOrders.length > 0) {
-        return sortOrdersDescending(window.__salonLastFirebaseOrders);
+        return sortOrdersDescending(migrateOrdersToSequential(window.__salonLastFirebaseOrders));
       }
       const candidateKeys = ['backstage_orders', 'sales_history', 'invoices', 'backstage_cloud_orders'];
       for (const key of candidateKeys) {
@@ -467,7 +475,7 @@ export default function App() {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return sortOrdersDescending(parsed);
+            return sortOrdersDescending(migrateOrdersToSequential(parsed));
           }
         }
       }
@@ -542,14 +550,16 @@ export default function App() {
     const handleFirebaseStaff = (e: CustomEvent<StaffMember[]>) => {
       if (Array.isArray(e.detail) && e.detail.length > 0) {
         setStaffMembers(
-          e.detail.map((s) => ({
-            ...s,
-            history: Array.isArray(s.history)
-              ? s.history
-              : s.history
-              ? (Object.values(s.history) as StaffServiceRecord[])
-              : [],
-          }))
+          e.detail
+            .filter((s) => s && s.name !== 'Aman')
+            .map((s) => ({
+              ...s,
+              history: Array.isArray(s.history)
+                ? s.history
+                : s.history
+                ? (Object.values(s.history) as StaffServiceRecord[])
+                : [],
+            }))
         );
       }
     };
@@ -667,9 +677,18 @@ export default function App() {
     }
   }, [customCategories]);
 
-  // Initial cloud synchronization check on app launch
+  // Initial startup execution: Purge ONLY Members List and Membership / Loyalty Pass History on launch
   useEffect(() => {
-    loadCloudData();
+    // 1. Immediately wipe local members & loyalty passes synchronously
+    purgeMembersAndLoyaltyPassesOnlySync();
+    setMemberships([]);
+    setLoyaltyPasses([]);
+
+    // 2. Dispatch events asynchronously to clear any in-memory references
+    purgeMembersAndLoyaltyPassesOnly().then(() => {
+      setMemberships([]);
+      setLoyaltyPasses([]);
+    });
   }, []);
 
   // Audio chime for luxury payment completion
@@ -962,6 +981,22 @@ export default function App() {
     }
   };
 
+  // 3. SPECIFIC DATA WIPE (PURGE ONLY HISTORIES):
+  // Clears Sales History, Membership History, Number History, and Staff History.
+  // Order counter resets strictly back to #1, while keeping all 112+ services and salon settings 100% intact.
+  const handleResetProductionData = async () => {
+    // a. Execute specific history purge script
+    await purgeOnlyHistories();
+
+    // b. Reset React state
+    setOrders([]);
+    setMemberships([]);
+    setLoyaltyPasses([]);
+    setCartItems([]);
+    setStaffMembers(INITIAL_STAFF_MEMBERS);
+    setActiveReceiptOrder(null);
+  };
+
   const cartSubtotal = cartItems.reduce(
     (sum, item) => sum + item.service.price * item.quantity,
     0
@@ -1106,6 +1141,7 @@ export default function App() {
             currencySymbol={settings.currencySymbol}
             onViewReceipt={(order) => setActiveReceiptOrder(order)}
             onUpdateOrders={setOrders}
+            onResetProductionData={handleResetProductionData}
             onRefreshCloud={loadCloudData}
             isCloudSyncing={isCloudSyncing}
             onLockLedger={() => {

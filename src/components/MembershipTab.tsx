@@ -24,6 +24,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { formatIndianDate, formatIndianDateTime, parseDateToTimestamp } from '../utils/dateUtils';
+import { cleanNumberInput, parseSafeInt } from '../utils/numberUtils';
+import { generateInvoiceNumber } from '../utils/orderUtils';
 import { SALON_SERVICES } from '../data/mockData';
 
 interface MembershipTabProps {
@@ -233,8 +235,8 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
   const [passClientName, setPassClientName] = useState('');
   const [passClientPhone, setPassClientPhone] = useState('');
   const [passAdvancePaidAmount, setPassAdvancePaidAmount] = useState<string>('2000');
-  const [passPaidVisits, setPassPaidVisits] = useState<number>(5);
-  const [passBonusVisits, setPassBonusVisits] = useState<number>(1);
+  const [passPaidVisitsInput, setPassPaidVisitsInput] = useState<string>('5');
+  const [passBonusVisitsInput, setPassBonusVisitsInput] = useState<string>('1');
   const [selectedEligibleServices, setSelectedEligibleServices] = useState<LoyaltyPassService[]>(() => {
     const defaultS = availableServices[0] || { id: 's1', name: 'Hair Cut & Styling', price: 350 };
     return [{ id: defaultS.id, name: defaultS.name, price: defaultS.price }];
@@ -242,11 +244,17 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
   const [passFormError, setPassFormError] = useState('');
   const [successToastMessage, setSuccessToastMessage] = useState<string | null>(null);
 
+  const passPaidVisits = useMemo(() => {
+    return parseSafeInt(passPaidVisitsInput, 0);
+  }, [passPaidVisitsInput]);
+
+  const passBonusVisits = useMemo(() => {
+    return parseSafeInt(passBonusVisitsInput, 0);
+  }, [passBonusVisitsInput]);
+
   // Auto calculate Total Visits = Paid Visits + Bonus Free Visits
   const calculatedTotalVisits = useMemo(() => {
-    const paid = Math.max(1, Number(passPaidVisits) || 1);
-    const bonus = Math.max(0, Number(passBonusVisits) || 0);
-    return paid + bonus;
+    return passPaidVisits + passBonusVisits;
   }, [passPaidVisits, passBonusVisits]);
 
   // Handle Multi-Service addition in modal
@@ -375,8 +383,13 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
       return;
     }
 
-    const paid = Math.max(1, Number(passPaidVisits) || 1);
-    const bonus = Math.max(0, Number(passBonusVisits) || 0);
+    if (passPaidVisits < 1) {
+      setPassFormError('Please enter at least 1 paid visit.');
+      return;
+    }
+
+    const paid = passPaidVisits;
+    const bonus = passBonusVisits;
     const total = paid + bonus;
     const advanceAmount = Math.max(0, parseFloat(passAdvancePaidAmount) || 0);
 
@@ -417,7 +430,7 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
     // b. RECORD ADVANCE PAID AMOUNT INTO SALES HISTORY AS "Prepaid Loyalty Pass Sale"
     if (advanceAmount > 0) {
       const advanceOrder: Order = {
-        id: `INV-${Date.now().toString().slice(-4)}`,
+        id: generateInvoiceNumber(orders),
         clientName: newPass.clientName,
         clientPhone: newPass.clientPhone,
         items: [
@@ -478,8 +491,8 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
     setPassClientName('');
     setPassClientPhone('');
     setPassAdvancePaidAmount('2000');
-    setPassPaidVisits(5);
-    setPassBonusVisits(1);
+    setPassPaidVisitsInput('5');
+    setPassBonusVisitsInput('1');
     const defaultS = availableServices[0] || { id: 's1', name: 'Hair Cut & Styling', price: 350 };
     setSelectedEligibleServices([{ id: defaultS.id, name: defaultS.name, price: defaultS.price }]);
     setIsAddPassModalOpen(false);
@@ -1035,7 +1048,7 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
                     required
                     placeholder="2000"
                     value={passAdvancePaidAmount}
-                    onChange={(e) => setPassAdvancePaidAmount(e.target.value)}
+                    onChange={(e) => setPassAdvancePaidAmount(cleanNumberInput(e.target.value, true))}
                     className="w-full pl-8 pr-3.5 py-2 bg-white border border-amber-300 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
@@ -1097,8 +1110,9 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
                     min="1"
                     step="1"
                     required
-                    value={passPaidVisits}
-                    onChange={(e) => setPassPaidVisits(Math.max(1, parseInt(e.target.value) || 1))}
+                    placeholder="5"
+                    value={passPaidVisitsInput}
+                    onChange={(e) => setPassPaidVisitsInput(cleanNumberInput(e.target.value))}
                     className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                   <span className="text-[10px] text-slate-400 mt-0.5 block">e.g. 5 Paid Visits</span>
@@ -1114,8 +1128,9 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
                     min="0"
                     step="1"
                     required
-                    value={passBonusVisits}
-                    onChange={(e) => setPassBonusVisits(Math.max(0, parseInt(e.target.value) || 0))}
+                    placeholder="1"
+                    value={passBonusVisitsInput}
+                    onChange={(e) => setPassBonusVisitsInput(cleanNumberInput(e.target.value))}
                     className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                   <span className="text-[10px] text-amber-700 font-bold mt-0.5 block">e.g. +1 Free Bonus Visit</span>

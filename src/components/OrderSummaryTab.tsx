@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { getNextOrderNumber } from '../utils/orderUtils';
 import { formatIndianDate, formatIndianDateTime, parseDateToTimestamp } from '../utils/dateUtils';
+import { cleanNumberInput, parseSafeNumber } from '../utils/numberUtils';
 import { getUniqueStaffNames } from '../utils/whatsappReceipt';
 
 interface OrderSummaryTabProps {
@@ -294,8 +295,8 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
   const [customAmountInput, setCustomAmountInput] = useState<string>('');
   const [isCustomOverridden, setIsCustomOverridden] = useState<boolean>(false);
 
-  // Special Discount percentage input (defaults to 0%)
-  const [discountPercentInput, setDiscountPercentInput] = useState<string>('0');
+  // Special Discount percentage input (defaults to empty string for clean typing/placeholder)
+  const [discountPercentInput, setDiscountPercentInput] = useState<string>('');
 
   const enteredDiscountNumber = useMemo(() => {
     if (!discountPercentInput.trim()) return 0;
@@ -323,8 +324,9 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
   }, [effectiveSubtotal, calculatedDiscountAmount]);
 
   const handleCustomAmountChange = (val: string) => {
+    const cleaned = cleanNumberInput(val, true);
     setIsCustomOverridden(true);
-    setCustomAmountInput(val);
+    setCustomAmountInput(cleaned);
   };
 
   const handleResetOverride = () => {
@@ -333,7 +335,13 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
   };
 
   const handleDiscountPercentChange = (newVal: string) => {
-    setDiscountPercentInput(newVal);
+    const cleaned = cleanNumberInput(newVal);
+    // Limit to max 100%
+    if (cleaned !== '' && Number(cleaned) > 100) {
+      setDiscountPercentInput('100');
+    } else {
+      setDiscountPercentInput(cleaned);
+    }
   };
 
   // 3 & 4 & 5. CHECKOUT FINALIZATION, ZERO-COMMISSION STAFF ATTRIBUTION & 6TH VISIT FULL-SCREEN POPUP

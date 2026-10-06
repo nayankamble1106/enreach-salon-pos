@@ -14,6 +14,7 @@ import {
   Scissors,
 } from 'lucide-react';
 import { parseDateToTimestamp, formatIndianDate, getTimeframeBounds } from '../utils/dateUtils';
+import { cleanNumberInput } from '../utils/numberUtils';
 import { SalesTimeframe } from './SalesHistoryTab';
 
 
@@ -48,7 +49,38 @@ export const StaffTab: React.FC<StaffTabProps> = ({
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [selectedStaffModal, setSelectedStaffModal] = useState<StaffMember | null>(null);
-  const [commissionRate, setCommissionRate] = useState<number>(0); // 0% (Default) stylist commission rate
+  
+  // Sub-period selection state for granular breakdown blocks (e.g. specific month, day, quarter, or time slot)
+  const [selectedSubPeriod, setSelectedSubPeriod] = useState<{
+    timeframe: SalesTimeframe;
+    id: string;
+    label: string;
+    start: number;
+    end: number;
+  } | null>(null);
+
+  // 2. DYNAMIC CUSTOM COMMISSION PERCENTAGE INPUT (Defaults to 0%)
+  const [commissionRateInput, setCommissionRateInput] = useState<string>('0');
+
+  const commissionRate = useMemo(() => {
+    if (!commissionRateInput.trim()) return 0;
+    const num = parseFloat(commissionRateInput);
+    return isNaN(num) || num < 0 ? 0 : Math.min(100, num);
+  }, [commissionRateInput]);
+
+  const handleCommissionInputChange = (val: string) => {
+    const cleaned = cleanNumberInput(val, true);
+    if (cleaned !== '' && Number(cleaned) > 100) {
+      setCommissionRateInput('100');
+    } else {
+      setCommissionRateInput(cleaned);
+    }
+  };
+
+  const handleTimeframeSelect = (tf: SalesTimeframe) => {
+    setSelectedTimeframe(tf);
+    setSelectedSubPeriod(null);
+  };
 
   // Timeframe configurations
   const timeframeConfig: {
@@ -63,11 +95,177 @@ export const StaffTab: React.FC<StaffTabProps> = ({
     { id: 'yearly', label: 'Yearly Sales', sublabel: `Calendar Year ${new Date().getFullYear()}`, icon: Sparkles },
   ];
 
-  // Calculate staff performance metrics dynamically based on the selected timeframe and orders ledger
-  const staffPerformanceData = useMemo(() => {
-    const { start, end } = getTimeframeBounds(selectedTimeframe);
+  // 1. Today's Time-Slot Breakdown (9am-12pm, 12pm-4pm, 4pm-8pm, 8pm-12am)
+  const todayBreakdown = useMemo(() => {
+    const slots = [
+      { name: 'Morning', timeRange: '09:00 AM - 12:00 PM', startHour: 9, endHour: 12 },
+      { name: 'Afternoon', timeRange: '12:00 PM - 04:00 PM', startHour: 12, endHour: 16 },
+      { name: 'Evening', timeRange: '04:00 PM - 08:00 PM', startHour: 16, endHour: 20 },
+      { name: 'Night', timeRange: '08:00 PM - 11:59 PM', startHour: 20, endHour: 24 },
+    ];
 
-    // Orders in selected timeframe
+    const { start, end } = getTimeframeBounds('daily');
+    const todaysBills = orders.filter((o) => {
+      const ts = parseDateToTimestamp(o.date);
+      return ts >= start && ts <= end;
+    });
+
+    const now = new Date();
+    return slots.map((slot) => {
+      const slotStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), slot.startHour, 0, 0, 0).getTime();
+      const slotEnd = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        slot.endHour === 24 ? 23 : slot.endHour - 1,
+        59,
+        59,
+        999
+      ).getTime();
+
+      const inSlot = todaysBills.filter((o) => {
+        const d = new Date(parseDateToTimestamp(o.date));
+        const hour = d.getHours();
+        return hour >= slot.startHour && hour < slot.endHour;
+      });
+      const revenue = inSlot.reduce((sum, o) => sum + o.total, 0);
+      return {
+        ...slot,
+        start: slotStart,
+        end: slotEnd,
+        count: inSlot.length,
+        revenue,
+      };
+    });
+  }, [orders]);
+
+  // 2. Weekly Day-Wise Breakdown (Mon, Tue, Wed, Thu, Fri, Sat, Sun)
+  const weeklyBreakdown = useMemo(() => {
+    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday, 0, 0, 0, 0);
+
+    return dayNames.map((name, idx) => {
+      const dayDate = new Date(monday.getTime() + idx * 24 * 60 * 60 * 1000);
+      const dayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0, 0).getTime();
+      const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59, 59, 999).getTime();
+
+      const matchedBills = orders.filter((o) => {
+        const ts = parseDateToTimestamp(o.date);
+        return ts >= dayStart && ts <= dayEnd;
+      });
+
+      const revenue = matchedBills.reduce((sum, o) => sum + o.total, 0);
+      return {
+        dayName: name,
+        formattedDate: formatIndianDate(dayDate),
+        start: dayStart,
+        end: dayEnd,
+        count: matchedBills.length,
+        revenue,
+        isToday: formatIndianDate(dayDate) === formatIndianDate(now),
+      };
+    });
+  }, [orders]);
+
+  // 3. Monthly Month-Wise Breakdown (Jan to Dec of Current Year)
+  const monthlyBreakdown = useMemo(() => {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    const monthFullNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    const currentYear = new Date().getFullYear();
+    const currentMonthIdx = new Date().getMonth();
+
+    return months.map((mName, mIdx) => {
+      const mStart = new Date(currentYear, mIdx, 1, 0, 0, 0, 0).getTime();
+      const mEnd = new Date(currentYear, mIdx + 1, 0, 23, 59, 59, 999).getTime();
+
+      const matchedBills = orders.filter((o) => {
+        const ts = parseDateToTimestamp(o.date);
+        return ts >= mStart && ts <= mEnd;
+      });
+
+      const revenue = matchedBills.reduce((sum, o) => sum + o.total, 0);
+      return {
+        monthName: mName,
+        monthFullName: monthFullNames[mIdx],
+        monthNumber: mIdx + 1,
+        start: mStart,
+        end: mEnd,
+        count: matchedBills.length,
+        revenue,
+        isCurrentMonth: mIdx === currentMonthIdx,
+      };
+    });
+  }, [orders]);
+
+  // 4. Yearly Overview Breakdown (Quarters Q1-Q4)
+  const yearlyBreakdown = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const quarters = [
+      { name: 'Q1 (Jan - Mar)', startMonth: 0, endMonth: 2 },
+      { name: 'Q2 (Apr - Jun)', startMonth: 3, endMonth: 5 },
+      { name: 'Q3 (Jul - Sep)', startMonth: 6, endMonth: 8 },
+      { name: 'Q4 (Oct - Dec)', startMonth: 9, endMonth: 11 },
+    ];
+
+    return quarters.map((q) => {
+      const qStart = new Date(currentYear, q.startMonth, 1, 0, 0, 0, 0).getTime();
+      const qEnd = new Date(currentYear, q.endMonth + 1, 0, 23, 59, 59, 999).getTime();
+
+      const matchedBills = orders.filter((o) => {
+        const ts = parseDateToTimestamp(o.date);
+        return ts >= qStart && ts <= qEnd;
+      });
+
+      const revenue = matchedBills.reduce((sum, o) => sum + o.total, 0);
+      return {
+        name: q.name,
+        start: qStart,
+        end: qEnd,
+        count: matchedBills.length,
+        revenue,
+      };
+    });
+  }, [orders]);
+
+  // Active calculation bounds (dynamically reflects selected sub-period or parent timeframe)
+  const activeBounds = useMemo(() => {
+    if (selectedSubPeriod && selectedSubPeriod.timeframe === selectedTimeframe) {
+      return {
+        start: selectedSubPeriod.start,
+        end: selectedSubPeriod.end,
+        label: selectedSubPeriod.label,
+        isCustomSubPeriod: true,
+      };
+    }
+    const bounds = getTimeframeBounds(selectedTimeframe);
+    const labelMap: Record<SalesTimeframe, string> = {
+      daily: "Today's Sales",
+      weekly: 'Current Week',
+      monthly: 'Current Month',
+      yearly: `Calendar Year ${new Date().getFullYear()}`,
+    };
+    return {
+      start: bounds.start,
+      end: bounds.end,
+      label: labelMap[selectedTimeframe],
+      isCustomSubPeriod: false,
+    };
+  }, [selectedTimeframe, selectedSubPeriod]);
+
+  // Calculate staff performance metrics dynamically based on the active chosen period
+  const staffPerformanceData = useMemo(() => {
+    const { start, end } = activeBounds;
+
+    // Orders in active selected timeframe / breakdown period
     const periodOrders = orders.filter((o) => {
       const ts = parseDateToTimestamp(o.date);
       return ts >= start && ts <= end;
@@ -146,9 +344,9 @@ export const StaffTab: React.FC<StaffTabProps> = ({
         periodRecords: staffRecords,
       };
     });
-  }, [staffMembers, orders, selectedTimeframe]);
+  }, [staffMembers, orders, activeBounds]);
 
-  // Overall total team sales for selected timeframe
+  // Overall total team sales for active chosen period
   const totalTeamRevenue = useMemo(() => {
     return staffPerformanceData.reduce((sum, s) => sum + s.periodSales, 0);
   }, [staffPerformanceData]);
@@ -182,7 +380,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
         <div className="flex items-center gap-3">
           <div className="bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl text-right">
             <span className="text-[10px] uppercase font-bold text-amber-800 block">
-              Team Revenue ({selectedTimeframe === 'daily' ? "Today's" : selectedTimeframe})
+              Team Revenue ({activeBounds.label})
             </span>
             <span className="text-base font-bold text-amber-900">
               {currencySymbol}{totalTeamRevenue.toLocaleString('en-IN')}
@@ -200,16 +398,28 @@ export const StaffTab: React.FC<StaffTabProps> = ({
         </div>
       </div>
 
-      {/* 4 Timeframe Filter Buttons */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-xs">
-        <div className="flex items-center justify-between mb-2.5">
+      {/* 4 Timeframe Filter Buttons & Interactive Breakdown Grid */}
+      <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
             <TrendingUp className="w-3.5 h-3.5 text-amber-700" />
             <span>Select Staff Calculation Timeframe</span>
           </span>
-          <span className="text-[11px] text-slate-500 font-medium">
-            Active: <strong className="text-slate-800 capitalize">{selectedTimeframe === 'daily' ? "Today's" : selectedTimeframe} Sales</strong>
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-500 font-medium">
+              Active Period: <strong className="text-slate-800 font-bold">{activeBounds.label}</strong>
+            </span>
+            {activeBounds.isCustomSubPeriod && (
+              <button
+                type="button"
+                onClick={() => setSelectedSubPeriod(null)}
+                className="text-[10px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-md transition-colors cursor-pointer border border-amber-300"
+                title="Reset to full timeframe"
+              >
+                ✕ View All
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
@@ -220,7 +430,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setSelectedTimeframe(item.id)}
+                onClick={() => handleTimeframeSelect(item.id)}
                 className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all cursor-pointer ${
                   isActive
                     ? 'bg-slate-900 border-slate-900 text-white shadow-md ring-2 ring-amber-500/40'
@@ -249,12 +459,249 @@ export const StaffTab: React.FC<StaffTabProps> = ({
             );
           })}
         </div>
+
+        {/* ALWAYS VISIBLE TIMEFRAME BREAKDOWN SECTION */}
+        <div className="mt-3 pt-3 border-t border-slate-100 animate-in fade-in duration-200">
+          {/* 1. Today's Sales Breakdown: Time-Slots */}
+          {selectedTimeframe === 'daily' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Today&apos;s Time-Slot Breakdown (Click to Calculate Staff for Slot)</span>
+                </span>
+                <span className="text-[11px] text-slate-400">Date: {formatIndianDate(new Date())}</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {todayBreakdown.map((slot) => {
+                  const isSelected = selectedSubPeriod?.id === slot.name && selectedSubPeriod?.timeframe === 'daily';
+                  return (
+                    <div
+                      key={slot.name}
+                      onClick={() =>
+                        setSelectedSubPeriod(
+                          isSelected
+                            ? null
+                            : {
+                                timeframe: 'daily',
+                                id: slot.name,
+                                label: `Today's ${slot.name} Slot`,
+                                start: slot.start,
+                                end: slot.end,
+                              }
+                        )
+                      }
+                      className={`p-3 rounded-xl border flex flex-col justify-between cursor-pointer transition-all active:scale-98 group ${
+                        isSelected
+                          ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-500 shadow-xs'
+                          : 'bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 hover:shadow-xs border-slate-200/90'
+                      }`}
+                      title={`Click to calculate staff performance for ${slot.name} (${slot.timeRange})`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs font-bold ${isSelected ? 'text-amber-950' : 'text-slate-900 group-hover:text-amber-950'}`}>
+                            {slot.name}
+                          </span>
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                            isSelected ? 'bg-amber-200 text-amber-900 border-amber-300' : 'bg-white text-slate-500 border-slate-200'
+                          }`}>
+                            {slot.count} {slot.count === 1 ? 'Bill' : 'Bills'}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">{slot.timeRange}</span>
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between">
+                        <span className="text-[10px] text-slate-500 font-medium">Sales</span>
+                        <span className={`text-sm font-bold ${isSelected ? 'text-amber-950' : 'text-slate-900 group-hover:text-amber-900'}`}>
+                          {currencySymbol}{slot.revenue.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 2. Weekly Sales Breakdown: Monday to Sunday */}
+          {selectedTimeframe === 'weekly' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Weekly 7-Day Breakdown (Click Any Day to Calculate Staff Performance)</span>
+                </span>
+                <span className="text-[11px] text-slate-400">Current Calendar Week</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                {weeklyBreakdown.map((day) => {
+                  const isSelected = selectedSubPeriod?.id === day.dayName && selectedSubPeriod?.timeframe === 'weekly';
+                  return (
+                    <div
+                      key={day.dayName}
+                      onClick={() =>
+                        setSelectedSubPeriod(
+                          isSelected
+                            ? null
+                            : {
+                                timeframe: 'weekly',
+                                id: day.dayName,
+                                label: `${day.dayName} (${day.formattedDate})`,
+                                start: day.start,
+                                end: day.end,
+                              }
+                        )
+                      }
+                      className={`p-2.5 rounded-xl border flex flex-col justify-between transition-all cursor-pointer active:scale-98 hover:shadow-xs ${
+                        isSelected
+                          ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-500 shadow-xs'
+                          : day.isToday
+                          ? 'bg-amber-50/90 border-amber-300 ring-1 ring-amber-400/50 hover:bg-amber-100/80'
+                          : 'bg-slate-50 border-slate-200 hover:bg-amber-50/60 hover:border-amber-400'
+                      }`}
+                      title={`Click to calculate staff sales and commissions for ${day.dayName}`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs font-bold ${isSelected || day.isToday ? 'text-amber-950' : 'text-slate-800'}`}>
+                            {day.dayName.slice(0, 3)}
+                          </span>
+                          {day.isToday && (
+                            <span className="text-[9px] font-black uppercase text-amber-800 bg-amber-200/80 px-1 rounded">
+                              Today
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 block font-mono mt-0.5">
+                          {day.formattedDate}
+                        </span>
+                      </div>
+                      <div className="mt-2 pt-1.5 border-t border-slate-200/60">
+                        <div className="text-[10px] text-slate-500 font-medium">
+                          {day.count} {day.count === 1 ? 'bill' : 'bills'}
+                        </div>
+                        <div className={`text-xs font-extrabold mt-0.5 ${isSelected || day.isToday ? 'text-amber-950' : 'text-slate-900'}`}>
+                          {currencySymbol}{day.revenue.toLocaleString('en-IN')}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 3. Monthly Sales Breakdown: Jan to Dec - 12-MONTH GRID (CLICKABLE FOR ALL 12 MONTHS) */}
+          {selectedTimeframe === 'monthly' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <BarChart3 className="w-3.5 h-3.5 text-amber-700" />
+                  <span>12-Month Breakdown (Click Any Month to Calculate Staff Salaries &amp; Commissions)</span>
+                </span>
+                <span className="text-[11px] text-slate-400">Calendar Year {new Date().getFullYear()}</span>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-12 gap-2">
+                {monthlyBreakdown.map((m) => {
+                  const isSelected = selectedSubPeriod?.id === m.monthName && selectedSubPeriod?.timeframe === 'monthly';
+                  return (
+                    <div
+                      key={m.monthName}
+                      onClick={() =>
+                        setSelectedSubPeriod(
+                          isSelected
+                            ? null
+                            : {
+                                timeframe: 'monthly',
+                                id: m.monthName,
+                                label: `${m.monthFullName} ${new Date().getFullYear()}`,
+                                start: m.start,
+                                end: m.end,
+                              }
+                        )
+                      }
+                      className={`p-2 rounded-xl border text-center flex flex-col justify-between transition-all cursor-pointer active:scale-95 hover:shadow-md hover:border-amber-400 ${
+                        isSelected
+                          ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-500 shadow-xs'
+                          : m.isCurrentMonth
+                          ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-400/60 shadow-xs'
+                          : 'bg-slate-50 border-slate-200 hover:bg-amber-50/70'
+                      }`}
+                      title={`Click to calculate staff performance for ${m.monthFullName}`}
+                    >
+                      <span className={`text-xs font-bold ${isSelected || m.isCurrentMonth ? 'text-amber-950 font-black' : 'text-slate-800'}`}>
+                        {m.monthName}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">
+                        {m.count} bills
+                      </span>
+                      <span className={`text-[11px] font-bold mt-1 block truncate ${isSelected || m.isCurrentMonth ? 'text-amber-950 font-black' : 'text-slate-900'}`}>
+                        {currencySymbol}{m.revenue.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 4. Yearly Sales Breakdown: Calendar Year & Quarters */}
+          {selectedTimeframe === 'yearly' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Quarterly Breakdown (Click Any Quarter to Calculate Staff Performance)</span>
+                </span>
+                <span className="text-[11px] text-slate-400">Annual Summary</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {yearlyBreakdown.map((q) => {
+                  const isSelected = selectedSubPeriod?.id === q.name && selectedSubPeriod?.timeframe === 'yearly';
+                  return (
+                    <div
+                      key={q.name}
+                      onClick={() =>
+                        setSelectedSubPeriod(
+                          isSelected
+                            ? null
+                            : {
+                                timeframe: 'yearly',
+                                id: q.name,
+                                label: q.name,
+                                start: q.start,
+                                end: q.end,
+                              }
+                        )
+                      }
+                      className={`p-3 rounded-xl border cursor-pointer transition-all active:scale-98 hover:shadow-xs group ${
+                        isSelected
+                          ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-500 shadow-xs'
+                          : 'bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 border-slate-200'
+                      }`}
+                      title={`Click to calculate staff performance for ${q.name}`}
+                    >
+                      <span className={`text-xs font-bold block ${isSelected ? 'text-amber-950' : 'text-slate-900 group-hover:text-amber-950'}`}>
+                        {q.name}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">{q.count} invoices processed</span>
+                      <div className={`mt-2 pt-2 border-t border-slate-200 text-sm font-extrabold ${isSelected ? 'text-amber-950' : 'text-slate-900 group-hover:text-amber-900'}`}>
+                        {currencySymbol}{q.revenue.toLocaleString('en-IN')}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Commission Rate Configurator Bar */}
+      {/* Commission Rate Configurator Bar with Editable Custom Percentage Input */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-800 flex items-center justify-center font-bold text-sm">
+          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 flex items-center justify-center font-black text-sm shrink-0">
             %
           </div>
           <div>
@@ -262,27 +709,51 @@ export const StaffTab: React.FC<StaffTabProps> = ({
               Stylist Commission Calculation
             </span>
             <span className="text-[11px] text-slate-500">
-              Calculate accurate stylist commissions based exclusively on services each staff performed
+              Custom percentage applied dynamically across team sales ({commissionRate}% active)
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 p-1 rounded-xl">
-          <span className="text-[11px] font-semibold text-slate-500 px-1.5">Rate:</span>
-          {[0, 5, 10, 15, 20].map((rate) => (
-            <button
-              key={rate}
-              type="button"
-              onClick={() => setCommissionRate(rate)}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                commissionRate === rate
-                  ? 'bg-amber-700 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white'
-              }`}
-            >
-              {rate === 0 ? '0% (Default)' : `${rate}%`}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Editable Custom Percentage Input Field */}
+          <div className="flex items-center gap-1.5 bg-amber-50/70 border border-amber-300 rounded-xl px-2.5 py-1.5 shadow-2xs">
+            <label htmlFor="custom-commission-rate-input" className="text-xs font-bold text-amber-950 whitespace-nowrap">
+              Commission:
+            </label>
+            <div className="relative flex items-center">
+              <input
+                id="custom-commission-rate-input"
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                placeholder="0"
+                value={commissionRateInput}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => handleCommissionInputChange(e.target.value)}
+                className="w-16 px-2 py-1 bg-white border border-amber-400 rounded-lg text-xs font-black text-center text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-600 shadow-2xs"
+              />
+              <span className="ml-1 text-xs font-bold text-amber-900 select-none">%</span>
+            </div>
+          </div>
+
+          {/* Quick Preset Selector Buttons */}
+          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 p-1 rounded-xl">
+            {[0, 5, 10, 15, 20].map((rate) => (
+              <button
+                key={rate}
+                type="button"
+                onClick={() => setCommissionRateInput(rate.toString())}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  commissionRate === rate && commissionRateInput === rate.toString()
+                    ? 'bg-amber-700 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+                }`}
+              >
+                {rate === 0 ? '0% (Default)' : `${rate}%`}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

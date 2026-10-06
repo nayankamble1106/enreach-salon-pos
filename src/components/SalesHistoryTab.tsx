@@ -38,6 +38,7 @@ interface SalesHistoryTabProps {
   currencySymbol: string;
   onViewReceipt: (order: Order) => void;
   onUpdateOrders: React.Dispatch<React.SetStateAction<Order[]>>;
+  onResetProductionData?: () => Promise<void> | void;
   onLockLedger?: () => void;
   onRefreshCloud?: () => Promise<void>;
   isCloudSyncing?: boolean;
@@ -50,6 +51,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
   currencySymbol,
   onViewReceipt,
   onUpdateOrders,
+  onResetProductionData,
   onLockLedger,
   onRefreshCloud,
   isCloudSyncing = false,
@@ -57,12 +59,49 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [searchTerm, setSearchTerm] = useState('');
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [isProductionResetModalOpen, setIsProductionResetModalOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetToastMessage, setResetToastMessage] = useState<string | null>(null);
   const [selectedBreakdown, setSelectedBreakdown] = useState<{
     title: string;
     subtitle: string;
     orders: Order[];
   } | null>(null);
   const [breakdownSearchQuery, setBreakdownSearchQuery] = useState('');
+
+  const handleExecuteProductionReset = async () => {
+    setIsResetting(true);
+    try {
+      if (onResetProductionData) {
+        await onResetProductionData();
+      } else {
+        onUpdateOrders([]);
+        await resetCloudOrders();
+        if (typeof window !== 'undefined' && window.salonFirebase?.resetOrders) {
+          await window.salonFirebase.resetOrders();
+        }
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('backstage_orders');
+            localStorage.removeItem('invoices');
+            localStorage.removeItem('sales_history');
+            localStorage.removeItem('backstage_cloud_orders');
+            localStorage.removeItem('backstage_memberships');
+            localStorage.removeItem('backstage_loyalty_passes');
+            localStorage.removeItem('backstage_cart');
+          }
+        } catch {}
+      }
+
+      setIsProductionResetModalOpen(false);
+      setResetToastMessage('✨ Clean Production Reset complete! Sales History is now empty and next order starts cleanly from #1. All 112+ Services & Settings remain intact.');
+      setTimeout(() => setResetToastMessage(null), 6000);
+    } catch (err) {
+      console.warn('Reset error:', err);
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   // Dynamically filter invoices by strict calendar-based timeframe
   const timeframeOrders = useMemo(() => {
@@ -262,6 +301,23 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
 
   return (
     <div className="space-y-5">
+      {/* Toast Notification for Production Reset */}
+      {resetToastMessage && (
+        <div className="bg-emerald-700 text-white px-4 py-3 rounded-2xl shadow-lg flex items-center justify-between gap-3 text-xs sm:text-sm font-semibold animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-200 shrink-0" />
+            <span>{resetToastMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setResetToastMessage(null)}
+            className="p-1 hover:bg-emerald-800 rounded-lg text-emerald-100 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Cloud Database Status & Quick Sync Banner */}
       <div className="bg-slate-900 text-white rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -325,29 +381,12 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
             type="button"
-            onClick={async () => {
-              if (window.confirm('Reset all sales history transactions? Ledger will be reset to 0 invoices and ₹0 revenue in both memory and Supabase cloud.')) {
-                onUpdateOrders([]);
-                await resetCloudOrders();
-                if (typeof window !== 'undefined' && window.salonFirebase?.resetOrders) {
-                  await window.salonFirebase.resetOrders();
-                }
-                try {
-                  if (typeof window !== 'undefined') {
-                    localStorage.removeItem('backstage_orders');
-                    localStorage.removeItem('invoices');
-                    localStorage.removeItem('sales_history');
-                  }
-                } catch {
-                  // localStorage fallback
-                }
-              }
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold transition-colors cursor-pointer border border-amber-200"
-            title="Reset sales history to clean state"
+            onClick={() => setIsProductionResetModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-900 text-xs font-bold transition-colors cursor-pointer border border-amber-300 shadow-2xs"
+            title="Wipe test data and reset invoice counter to #1 for production"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>Reset Counter to #1</span>
+            <span>🧹 Reset / Clear Test Data (#1)</span>
           </button>
 
           {onLockLedger && (
@@ -996,6 +1035,85 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Close Breakdown
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Production Clean Reset Confirmation Modal */}
+      {isProductionResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 relative animate-in zoom-in-95 duration-150 space-y-4">
+            <button
+              type="button"
+              onClick={() => setIsProductionResetModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 border border-amber-200">
+                <Sparkles className="w-6 h-6 text-amber-700" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-base text-slate-900">
+                  Clean Test Data &amp; Reset for Production
+                </h3>
+                <p className="text-xs text-slate-500">Prepare terminal for 100% fresh live client billing</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
+              <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>What will happen upon reset:</span>
+              </div>
+              <ul className="list-disc list-inside text-slate-600 space-y-1 pl-1 text-[11px]">
+                <li>Wipes all test/dummy invoices &amp; orders.</li>
+                <li>Invoice counter is <strong>reset to #1</strong> for the 1st real customer.</li>
+                <li>Wipes test memberships, loyalty passes &amp; temporary cart items.</li>
+                <li>Resets staff monthly sales figures back to ₹0 while keeping stylist profiles.</li>
+              </ul>
+            </div>
+
+            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900 font-medium space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-emerald-800">
+                <Scissors className="w-3.5 h-3.5" />
+                <span>Guaranteed Data Safety:</span>
+              </div>
+              <p className="text-[11px]">
+                Your <strong>112+ Salon Services Catalog</strong>, Custom Categories, Salon Logo, GST &amp; Settings will <strong>REMAIN 100% INTACT</strong> and are NOT deleted.
+              </p>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={() => setIsProductionResetModalOpen(false)}
+                className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 text-slate-700 font-semibold text-xs hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={handleExecuteProductionReset}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-amber-700 hover:bg-amber-800 active:bg-amber-900 text-white font-bold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isResetting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Resetting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Confirm Reset (#1)</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

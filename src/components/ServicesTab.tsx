@@ -16,6 +16,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { PinLockModal } from './PinLockModal';
+import { cleanNumberInput } from '../utils/numberUtils';
 
 interface ServicesTabProps {
   services: SalonService[];
@@ -644,7 +645,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                     step="1"
                     required
                     value={serviceFormPrice}
-                    onChange={(e) => setServiceFormPrice(e.target.value)}
+                    onChange={(e) => setServiceFormPrice(cleanNumberInput(e.target.value, true))}
                     placeholder="400"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-8 pr-3.5 py-2.5 text-sm font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
@@ -674,7 +675,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                     min="0"
                     step="5"
                     value={serviceFormDuration}
-                    onChange={(e) => setServiceFormDuration(e.target.value)}
+                    onChange={(e) => setServiceFormDuration(cleanNumberInput(e.target.value))}
                     placeholder="e.g., 30"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
@@ -756,7 +757,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                     step="1"
                     required
                     value={serviceFormPrice}
-                    onChange={(e) => setServiceFormPrice(e.target.value)}
+                    onChange={(e) => setServiceFormPrice(cleanNumberInput(e.target.value, true))}
                     placeholder="500"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-8 pr-3.5 py-2.5 text-sm font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
@@ -786,7 +787,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                     min="0"
                     step="5"
                     value={serviceFormDuration}
-                    onChange={(e) => setServiceFormDuration(e.target.value)}
+                    onChange={(e) => setServiceFormDuration(cleanNumberInput(e.target.value))}
                     placeholder="e.g., 45"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
@@ -891,7 +892,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                       min="0"
                       step="1"
                       value={newCatInitialServicePrice}
-                      onChange={(e) => setNewCatInitialServicePrice(e.target.value)}
+                      onChange={(e) => setNewCatInitialServicePrice(cleanNumberInput(e.target.value, true))}
                       placeholder="1500"
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-7 pr-3.5 py-2 text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                     />
