@@ -34,6 +34,8 @@ interface ServicesTabProps {
   onDeleteService: (serviceId: string) => void;
   customCategories?: string[];
   onAddCategory?: (categoryName: string) => void;
+  isEditMode?: boolean;
+  onToggleEditMode?: (enabled: boolean) => void;
 }
 
 export const ServicesTab: React.FC<ServicesTabProps> = ({
@@ -49,9 +51,19 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   onDeleteService,
   customCategories = [],
   onAddCategory,
+  isEditMode: propIsEditMode,
+  onToggleEditMode,
 }) => {
   // State for Service Manager Edit Mode and PIN prompt
-  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+  const [internalEditMode, setInternalEditMode] = useState<boolean>(false);
+  const isEditMode = propIsEditMode !== undefined ? propIsEditMode : internalEditMode;
+  const setEditMode = (val: boolean) => {
+    if (onToggleEditMode) {
+      onToggleEditMode(val);
+    } else {
+      setInternalEditMode(val);
+    }
+  };
   const [isPinModalOpen, setIsPinModalOpen] = useState<boolean>(false);
 
   // Modals for Editing and Adding
@@ -87,7 +99,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   const handleToggleSwitch = () => {
     if (isEditMode) {
       // Turn OFF immediately
-      setIsEditMode(false);
+      setEditMode(false);
     } else {
       // Prompt 4-digit PIN (default '1234')
       setIsPinModalOpen(true);
@@ -96,7 +108,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
   const handlePinSuccess = () => {
     setIsPinModalOpen(false);
-    setIsEditMode(true);
+    setEditMode(true);
   };
 
   // Form states for modals

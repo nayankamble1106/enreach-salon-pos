@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Order, MembershipRecord } from '../types';
-import { Search, Phone, User, Calendar, DollarSign, Star, Clock, Copy, Check, X, Eye, TrendingUp, Scissors } from 'lucide-react';
+import { Search, Phone, User, Calendar, DollarSign, Star, Clock, Copy, Check, X, Eye, TrendingUp, Scissors, Trash2, CheckCircle2 } from 'lucide-react';
 import {
   parseDateToTimestamp,
   formatIndianDate,
@@ -13,17 +13,35 @@ interface NumberHistoryTabProps {
   orders: Order[];
   memberships: MembershipRecord[];
   currencySymbol: string;
+  onPurgeNumberLogs?: () => void;
 }
 
 export const NumberHistoryTab: React.FC<NumberHistoryTabProps> = ({
   orders,
   memberships,
   currencySymbol,
+  onPurgeNumberLogs,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedNumber, setCopiedNumber] = useState<string | null>(null);
   const [selectedClientPhone, setSelectedClientPhone] = useState<string | null>(null);
+  const [purgeToastMessage, setPurgeToastMessage] = useState<string | null>(null);
+
+  const handlePurgeNumberLogsClick = () => {
+    if (onPurgeNumberLogs) {
+      onPurgeNumberLogs();
+    } else {
+      try {
+        localStorage.removeItem('backstage_number_history');
+        localStorage.removeItem('backstage_client_logs');
+        localStorage.removeItem('backstage_orders');
+        localStorage.setItem('backstage_orders', '[]');
+      } catch {}
+    }
+    setPurgeToastMessage('🧹 Purged All Number Logs! Client mobile history directory is now 0 records.');
+    setTimeout(() => setPurgeToastMessage(null), 5000);
+  };
 
   const handleCopyPhone = (phone: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -226,6 +244,23 @@ export const NumberHistoryTab: React.FC<NumberHistoryTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {purgeToastMessage && (
+        <div className="bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg flex items-center justify-between gap-3 text-xs sm:text-sm font-semibold animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-200 shrink-0" />
+            <span>{purgeToastMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPurgeToastMessage(null)}
+            className="p-1 hover:bg-emerald-700 rounded-lg text-emerald-100 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Banner */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
         <div>
@@ -618,7 +653,7 @@ export const NumberHistoryTab: React.FC<NumberHistoryTabProps> = ({
                       </tr>
                     ) : (
                       fullClientHistory.orders.map((order, idx) => (
-                        <tr key={order.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                        <tr key={`client-order-${order.id || 'ord'}-${order.date || ''}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
                           <td className="py-3 px-3 text-slate-600 whitespace-nowrap font-medium">
                             <div className="flex items-center gap-1.5">
                               <Calendar className="w-3.5 h-3.5 text-slate-400" />

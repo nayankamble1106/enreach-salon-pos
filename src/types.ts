@@ -122,6 +122,8 @@ export interface SalonFirebaseBridge {
   deleteServiceItem?: (serviceId: string) => Promise<unknown>;
   syncCategories?: (categoriesList: string[]) => Promise<unknown>;
   syncLoyaltyPass?: (pass: LoyaltyPass) => Promise<unknown>;
+  deleteMembership?: (memberId: string) => Promise<unknown>;
+  deleteLoyaltyPass?: (passId: string) => Promise<unknown>;
   getLoyaltyPasses?: () => LoyaltyPass[];
   getOrders: () => Order[];
   getMemberships: () => MembershipRecord[];
@@ -129,6 +131,8 @@ export interface SalonFirebaseBridge {
   getServices?: () => SalonService[];
   getCategories?: () => string[];
   resetOrders?: () => Promise<unknown>;
+  resetMemberships?: () => Promise<unknown>;
+  resetLoyaltyPasses?: () => Promise<unknown>;
 }
 
 declare global {

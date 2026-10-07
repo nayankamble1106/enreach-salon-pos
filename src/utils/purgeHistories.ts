@@ -1,16 +1,16 @@
 /**
  * SPECIFIC HISTORY PURGE SCRIPT
  * 
- * Permanently purges ONLY the 4 transaction & activity history objects:
- * 1. Sales History (all bills, receipts & orders)
- * 2. Membership History (dummy VIP members & loyalty pass logs)
+ * Permanently purges ONLY the 3 transaction & activity history objects:
+ * 1. Sales History (all past bills, receipts & orders)
+ * 2. Staff History (clears staff service logs & resets monthly sales to ₹0)
  * 3. Number History (customer phone logs & visit frequency)
- * 4. Staff History (clears staff service logs & resets monthly sales to ₹0)
  * 
  * STRICT GUARANTEES:
+ * - 100% PRESERVES the Members & Loyalty Pass section (untouched).
  * - 100% PRESERVES the 112+ Salon Services Catalog & Custom Categories.
  * - 100% PRESERVES Salon Logo, Name, GST Number & App Settings.
- * - Enforces Order ID counter reset strictly back to "#1".
+ * - Enforces Order ID counter reset strictly back to 0 -> next bill is "#1".
  */
 
 import { resetCloudOrders } from '../services/supabase';
@@ -38,25 +38,19 @@ export function purgeOnlyHistoriesSync(): void {
     localStorage.removeItem('backstage_cloud_orders');
     localStorage.removeItem('backstage_cart');
 
-    // 2. PURGE MEMBERSHIP & LOYALTY PASS HISTORY
-    localStorage.removeItem('backstage_memberships');
-    localStorage.removeItem('backstage_loyalty_passes');
-
-    // 3. PURGE NUMBER HISTORY / TEMPORARY CLIENT LOGS
+    // 2. PURGE NUMBER HISTORY / TEMPORARY CLIENT LOGS
     localStorage.removeItem('backstage_number_history');
     localStorage.removeItem('backstage_client_logs');
 
-    // 4. PURGE STAFF SERVICE WORK HISTORY (Preserve Staff Profiles & reset sales to 0)
+    // 3. PURGE STAFF SERVICE WORK HISTORY (Preserve Staff Profiles & reset sales to 0)
     localStorage.setItem('backstage_staff_performance', JSON.stringify(OFFICIAL_STAFF_MEMBERS));
 
-    // Clear runtime in-memory caches
+    // Clear runtime in-memory caches (preserve members and loyalty passes)
     if (window.__salonLastFirebaseOrders) window.__salonLastFirebaseOrders = [];
-    if (window.__salonLastFirebaseMembers) window.__salonLastFirebaseMembers = [];
-    if (window.__salonLastFirebaseLoyaltyPasses) window.__salonLastFirebaseLoyaltyPasses = [];
     if (window.__salonLastFirebaseStaff) window.__salonLastFirebaseStaff = OFFICIAL_STAFF_MEMBERS;
 
     localStorage.setItem('enreach_production_clean_v1', 'true');
-    console.log('🧹 [Startup Purge] Sales, Memberships, Number History & Staff logs purged. Services and Settings intact. Next Order: #1');
+    console.log('🧹 [Startup Purge] Sales, Number History & Staff logs purged. Members, Services and Settings intact. Next Order: #1');
   } catch (err) {
     console.warn('[Startup Purge] Warning:', err);
   }
@@ -88,14 +82,12 @@ export async function purgeOnlyHistories(): Promise<{ success: boolean; message:
 
     // Dispatch system events for live UI reactivity
     window.dispatchEvent(new CustomEvent('salon:firebase-orders-updated', { detail: [] }));
-    window.dispatchEvent(new CustomEvent('salon:firebase-memberships-updated', { detail: [] }));
-    window.dispatchEvent(new CustomEvent('salon:firebase-loyalty-passes-updated', { detail: [] }));
     window.dispatchEvent(new CustomEvent('salon:firebase-staff-updated', { detail: OFFICIAL_STAFF_MEMBERS }));
 
-    console.log('✅ Specific histories purged successfully across storage & cloud. Order counter reset to #1.');
+    console.log('✅ Specific histories purged successfully across storage & cloud. Order counter reset to 0 -> #1.');
     return {
       success: true,
-      message: 'Histories purged successfully. Next order strictly starts at #1. Services & Settings preserved.',
+      message: 'Histories purged successfully. Next order strictly starts at #1. Members, Services & Settings preserved.',
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -105,36 +97,57 @@ export async function purgeOnlyHistories(): Promise<{ success: boolean; message:
 }
 
 /**
- * Purge ONLY Members List and Membership / Loyalty Pass History data on launch
- * Guarantees zero records in Members section for handover while keeping all services, orders, and staff intact.
+ * ONE-TIME PERMANENT DATA WIPEOUT ON LOAD (app_reset_v2):
+ * - Checks localStorage for 'app_reset_v2' flag.
+ * - IF app_reset_v2 is NOT set:
+ *    1. Permanently delete / clear the stored array/data for:
+ *       - Sales History ('backstage_orders', 'sales_history', 'invoices', 'backstage_cloud_orders', 'backstage_cart')
+ *       - Staff History & Logs ('backstage_staff_performance' reset to clean official staff with 0 sales and empty history)
+ *       - Number History & Logs ('backstage_number_history', 'backstage_client_logs')
+ *    2. Hard-reset the Invoice / Order Counter strictly back to 0 (so the next real sale creates bill #1).
+ *    3. Sets localStorage.setItem('app_reset_v2', 'true') so that this wipe script ONLY runs ONCE and NEVER deletes future data again.
+ * - IF app_reset_v2 IS set:
+ *    Skips completely so that all future live entries starting tomorrow are stored normally in LocalStorage!
  */
-export function purgeMembersAndLoyaltyPassesOnlySync(): void {
-  if (typeof window === 'undefined') return;
+export function runOneTimePermanentWipeoutSync(): boolean {
+  if (typeof window === 'undefined') return false;
+
   try {
-    localStorage.removeItem('backstage_memberships');
-    localStorage.removeItem('backstage_loyalty_passes');
-    if (window.__salonLastFirebaseMembers) window.__salonLastFirebaseMembers = [];
-    if (window.__salonLastFirebaseLoyaltyPasses) window.__salonLastFirebaseLoyaltyPasses = [];
-    console.log('🧹 [Startup] Members List & Loyalty Pass History purged cleanly (0 records).');
+    const isWiped = localStorage.getItem('app_reset_v2');
+    if (isWiped === 'true') {
+      return false; // Already wiped once, future data persists permanently!
+    }
+
+    // 1. Sales History
+    localStorage.removeItem('backstage_orders');
+    localStorage.removeItem('sales_history');
+    localStorage.removeItem('invoices');
+    localStorage.removeItem('backstage_cloud_orders');
+    localStorage.removeItem('backstage_cart');
+
+    // 2. Number History & Logs
+    localStorage.removeItem('backstage_number_history');
+    localStorage.removeItem('backstage_client_logs');
+
+    // 3. Staff History & Logs (preserves official staff roster and resets monthly sales to 0)
+    localStorage.setItem('backstage_staff_performance', JSON.stringify(OFFICIAL_STAFF_MEMBERS));
+
+    // Clear runtime in-memory caches (preserve members and loyalty passes)
+    if (window.__salonLastFirebaseOrders) window.__salonLastFirebaseOrders = [];
+    if (window.__salonLastFirebaseStaff) window.__salonLastFirebaseStaff = OFFICIAL_STAFF_MEMBERS;
+
+    // Set one-time version flag so future data is saved permanently
+    localStorage.setItem('app_reset_v2', 'true');
+    console.log('🧹 [One-Time Wipeout] app_reset_v2 executed. Sales, Staff logs & Number History wiped. Members and Services preserved. Next Order: #1');
+    return true;
   } catch (err) {
-    console.warn('[Startup] Membership purge warning:', err);
+    console.warn('[One-Time Wipeout] Warning:', err);
+    return false;
   }
 }
 
-export async function purgeMembersAndLoyaltyPassesOnly(): Promise<{ success: boolean; message: string }> {
-  purgeMembersAndLoyaltyPassesOnlySync();
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('salon:firebase-memberships-updated', { detail: [] }));
-    window.dispatchEvent(new CustomEvent('salon:firebase-loyalty-passes-updated', { detail: [] }));
-  }
-  return {
-    success: true,
-    message: 'Members List and Membership History purged successfully.',
-  };
-}
-
-// Auto-execute immediate members purge on initial script load
-purgeMembersAndLoyaltyPassesOnlySync();
+// Auto-execute immediate one-time wipeout check on module evaluation
+runOneTimePermanentWipeoutSync();
 
 // Attach to window object for direct console execution: window.purgeAllHistoriesForProduction()
 if (typeof window !== 'undefined') {

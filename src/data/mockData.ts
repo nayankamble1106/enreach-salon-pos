@@ -1,4 +1,4 @@
-import { SalonService, Stylist, Order, SalonSettings, StaffMember } from '../types';
+import { SalonService, Stylist, Order, SalonSettings, StaffMember, MembershipRecord } from '../types';
 
 export const STYLISTS: Stylist[] = [
   { id: 'staff-1', name: 'Kunal', role: 'Senior Hair Stylist', rating: 4.9 },
@@ -159,6 +159,7 @@ export const SALON_SERVICES: SalonService[] = [
 ];
 
 export const INITIAL_ORDERS: Order[] = [];
+export const INITIAL_MEMBERSHIPS: MembershipRecord[] = [];
 
 export const INITIAL_STAFF: StaffMember[] = [
   {

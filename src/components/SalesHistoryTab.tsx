@@ -21,6 +21,7 @@ import {
   X,
   Scissors,
   Phone,
+  Trash2,
 } from 'lucide-react';
 import { getWhatsAppReceiptUrl } from '../utils/whatsappReceipt';
 import { sortOrdersDescending } from '../utils/orderUtils';
@@ -39,6 +40,7 @@ interface SalesHistoryTabProps {
   onViewReceipt: (order: Order) => void;
   onUpdateOrders: React.Dispatch<React.SetStateAction<Order[]>>;
   onResetProductionData?: () => Promise<void> | void;
+  onPurgeAllSales?: () => void;
   onLockLedger?: () => void;
   onRefreshCloud?: () => Promise<void>;
   isCloudSyncing?: boolean;
@@ -52,6 +54,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
   onViewReceipt,
   onUpdateOrders,
   onResetProductionData,
+  onPurgeAllSales,
   onLockLedger,
   onRefreshCloud,
   isCloudSyncing = false,
@@ -68,6 +71,24 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
     orders: Order[];
   } | null>(null);
   const [breakdownSearchQuery, setBreakdownSearchQuery] = useState('');
+
+  const handlePurgeAllSalesClick = () => {
+    if (onPurgeAllSales) {
+      onPurgeAllSales();
+    } else {
+      onUpdateOrders([]);
+      try {
+        localStorage.removeItem('backstage_orders');
+        localStorage.removeItem('sales_history');
+        localStorage.removeItem('invoices');
+        localStorage.removeItem('backstage_cloud_orders');
+        localStorage.removeItem('backstage_cart');
+        localStorage.setItem('backstage_orders', '[]');
+      } catch {}
+    }
+    setResetToastMessage('🧹 Purged All Sales Data! Sales History is now 0 records and next invoice is #1.');
+    setTimeout(() => setResetToastMessage(null), 5000);
+  };
 
   const handleExecuteProductionReset = async () => {
     setIsResetting(true);
@@ -379,16 +400,6 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
-          <button
-            type="button"
-            onClick={() => setIsProductionResetModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-900 text-xs font-bold transition-colors cursor-pointer border border-amber-300 shadow-2xs"
-            title="Wipe test data and reset invoice counter to #1 for production"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>🧹 Reset / Clear Test Data (#1)</span>
-          </button>
-
           {onLockLedger && (
             <button
               type="button"
@@ -755,8 +766,8 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-50/60 transition-colors">
+                filteredOrders.map((order, idx) => (
+                  <tr key={`order-row-${order.id || 'ord'}-${order.date || ''}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
                     <td className="py-3.5 px-4">
                       <div className="font-bold text-slate-900 text-sm">{order.id}</div>
                       <div className="flex items-center gap-1 text-[11px] text-slate-400 mt-0.5">
@@ -921,9 +932,9 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {modalFilteredOrders.map((order) => (
+                  {modalFilteredOrders.map((order, idx) => (
                     <div
-                      key={order.id}
+                      key={`modal-order-${order.id || 'ord'}-${order.date || ''}-${idx}`}
                       className="py-3 sm:py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 -mx-4 sm:-mx-6 px-4 sm:px-6 transition-colors"
                     >
                       <div className="flex items-start gap-3 min-w-0 flex-1">

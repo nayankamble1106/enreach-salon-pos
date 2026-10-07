@@ -28,6 +28,12 @@ export const parseOrderSequence = (id: string): number => {
 };
 
 /**
+ * Initial Order Counter strictly set to 0.
+ * When the order counter is 0, the next generated order/invoice is strictly "#1".
+ */
+export const INITIAL_ORDER_COUNTER = 0;
+
+/**
  * STRICT MONTHLY INVOICE / ORDER NUMBER GENERATOR:
  * 
  * 1. FORCE RESET MONTHLY COUNTER TO #1:

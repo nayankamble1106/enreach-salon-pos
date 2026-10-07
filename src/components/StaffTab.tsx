@@ -12,6 +12,8 @@ import {
   TrendingUp,
   Wallet,
   Scissors,
+  Trash2,
+  CheckCircle2,
 } from 'lucide-react';
 import { parseDateToTimestamp, formatIndianDate, getTimeframeBounds } from '../utils/dateUtils';
 import { cleanNumberInput } from '../utils/numberUtils';
@@ -39,6 +41,8 @@ interface StaffTabProps {
   orders: Order[];
   currencySymbol: string;
   onLockStaff: () => void;
+  onUpdateStaff?: (updatedStaff: StaffMember[]) => void;
+  onPurgeStaffLogs?: () => void;
 }
 
 export const StaffTab: React.FC<StaffTabProps> = ({
@@ -46,9 +50,30 @@ export const StaffTab: React.FC<StaffTabProps> = ({
   orders,
   currencySymbol,
   onLockStaff,
+  onUpdateStaff,
+  onPurgeStaffLogs,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [selectedStaffModal, setSelectedStaffModal] = useState<StaffMember | null>(null);
+  const [purgeToastMessage, setPurgeToastMessage] = useState<string | null>(null);
+
+  const handlePurgeStaffLogsClick = () => {
+    if (onPurgeStaffLogs) {
+      onPurgeStaffLogs();
+    } else {
+      const resetStaff = staffMembers.map((s) => ({
+        ...s,
+        totalSalesThisMonth: 0,
+        history: [],
+      }));
+      if (onUpdateStaff) onUpdateStaff(resetStaff);
+      try {
+        localStorage.setItem('backstage_staff_performance', JSON.stringify(resetStaff));
+      } catch {}
+    }
+    setPurgeToastMessage('🧹 Purged All Staff Logs! Staff sales and commission logs are now reset to 0.');
+    setTimeout(() => setPurgeToastMessage(null), 5000);
+  };
   
   // Sub-period selection state for granular breakdown blocks (e.g. specific month, day, quarter, or time slot)
   const [selectedSubPeriod, setSelectedSubPeriod] = useState<{
@@ -303,7 +328,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
           servicesCount += count;
 
           staffRecords.push({
-            id: `ord-rec-${o.id}-${staff.name}`,
+            id: `ord-rec-${o.id}-${staff.name}-${o.date || ''}-${staffRecords.length}`,
             date: o.date,
             clientName: o.clientName || 'Walk-in Client',
             serviceName: staffItems
@@ -365,6 +390,23 @@ export const StaffTab: React.FC<StaffTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {purgeToastMessage && (
+        <div className="bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg flex items-center justify-between gap-3 text-xs sm:text-sm font-semibold animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-200 shrink-0" />
+            <span>{purgeToastMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPurgeToastMessage(null)}
+            className="p-1 hover:bg-emerald-700 rounded-lg text-emerald-100 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Banner */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
         <div>
@@ -908,8 +950,8 @@ export const StaffTab: React.FC<StaffTabProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    modalStaffDetails.periodRecords.map((record) => (
-                      <tr key={record.id} className="hover:bg-slate-50/60 transition-colors">
+                    modalStaffDetails.periodRecords.map((record, rIdx) => (
+                      <tr key={`staff-rec-${record.id || 'rec'}-${record.date || ''}-${rIdx}`} className="hover:bg-slate-50/60 transition-colors">
                         <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap font-medium">
                           {formatIndianDate(record.date)}
                         </td>

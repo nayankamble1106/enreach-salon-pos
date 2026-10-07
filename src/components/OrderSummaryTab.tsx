@@ -55,7 +55,6 @@ const DEFAULT_STAFF_NAMES = [
   'Sapna',
   'Juhi',
   'Vishal sir',
-  'Aman',
 ];
 
 export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
@@ -95,13 +94,6 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
   // Synchronized Loyalty Passes List
   const [internalLoyaltyPasses, setInternalLoyaltyPasses] = useState<LoyaltyPass[]>(() => {
     if (propLoyaltyPasses && propLoyaltyPasses.length > 0) return propLoyaltyPasses;
-    if (typeof window !== 'undefined' && window.__salonLastFirebaseLoyaltyPasses && window.__salonLastFirebaseLoyaltyPasses.length > 0) {
-      return window.__salonLastFirebaseLoyaltyPasses;
-    }
-    try {
-      const saved = localStorage.getItem('backstage_loyalty_passes');
-      if (saved) return JSON.parse(saved);
-    } catch {}
     return [];
   });
 
@@ -630,7 +622,7 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
           </div>
 
           <div className="divide-y divide-slate-100 mt-2">
-            {cartItems.map((item) => {
+            {cartItems.map((item, idx) => {
               const currentItemStylist = item.stylistName || activeStaff;
               const isOverridden = item.stylistName && item.stylistName !== activeStaff;
               const isPassEligible = isItemPassEligible(item);
@@ -638,7 +630,7 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
               const origPrice = getItemOriginalPrice(item);
 
               return (
-                <div key={item.service.id} className="py-3 flex flex-col gap-2">
+                <div key={`cart-${item.service.id}-${item.stylistName || ''}-${idx}`} className="py-3 flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">

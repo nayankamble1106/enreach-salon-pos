@@ -21,14 +21,13 @@ import {
   fetchMembershipsFromCloud,
   syncStaffServiceToCloud,
   resetCloudOrders,
+  isSupabaseConfigured,
 } from './services/supabase';
 import { getNextOrderNumber, sortOrdersDescending, migrateOrdersToSequential } from './utils/orderUtils';
 import { formatIndianDate } from './utils/dateUtils';
 import {
+  runOneTimePermanentWipeoutSync,
   purgeOnlyHistories,
-  purgeOnlyHistoriesSync,
-  purgeMembersAndLoyaltyPassesOnlySync,
-  purgeMembersAndLoyaltyPassesOnly,
   OFFICIAL_STAFF_MEMBERS,
 } from './utils/purgeHistories';
 
@@ -109,50 +108,49 @@ export default function App() {
     description: 'Enter confidential authorization PIN to access transactions & revenue ledgers.',
   });
 
-  // Staff Performance Dashboard state (Initialized with 0 sales and empty history)
+  // Staff Performance Dashboard state (Directly initialized to 0 sales and empty staff history logs [])
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>(() => {
     try {
+      const isClean = safeGetItem('enreach_delivery_clean_v2');
+      if (!isClean) {
+        safeSetItem('enreach_delivery_clean_v2', 'true');
+        safeSetItem('backstage_staff_performance', JSON.stringify(INITIAL_STAFF_MEMBERS));
+        return INITIAL_STAFF_MEMBERS;
+      }
       const saved = safeGetItem('backstage_staff_performance');
       if (saved) {
-        const parsed: StaffMember[] = JSON.parse(saved);
-        const filtered = parsed.filter((s) => s.name !== 'Aman' && !['Rahul', 'Priya', 'Vikram', 'Sneha', 'Pooja'].includes(s.name));
-        if (filtered.length === OFFICIAL_STAFF_NAMES.length) {
-          return filtered.map((s) => ({
-            ...s,
-            history: Array.isArray(s.history) ? s.history : (s.history ? Object.values(s.history) : []),
-          }));
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.filter((s) => s && s.name !== 'Aman');
         }
       }
-      return INITIAL_STAFF_MEMBERS;
-    } catch {
-      return INITIAL_STAFF_MEMBERS;
-    }
+    } catch {}
+    return INITIAL_STAFF_MEMBERS;
   });
 
   // Selected staff for Billing / Cart (Defaults to official staff Kunal)
   const [selectedBillingStaff, setSelectedBillingStaff] = useState<string>('Kunal');
 
-  // Memberships State (persisted locally, clean initial state)
+  // Memberships State (Preserves existing cleaned members and loyalty passes in LocalStorage)
   const [memberships, setMemberships] = useState<MembershipRecord[]>(() => {
     try {
       const saved = safeGetItem('backstage_memberships');
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
       }
-      return INITIAL_MEMBERSHIPS;
-    } catch {
-      return INITIAL_MEMBERSHIPS;
-    }
+    } catch {}
+    return [];
   });
 
-  // Loyalty Member Passes State (persisted locally, synced with Firebase Realtime Database)
+  // Loyalty Member Passes State (Preserves existing cleaned passes in LocalStorage)
   const [loyaltyPasses, setLoyaltyPasses] = useState<LoyaltyPass[]>(() => {
     try {
-      if (typeof window !== 'undefined' && window.__salonLastFirebaseLoyaltyPasses && window.__salonLastFirebaseLoyaltyPasses.length > 0) {
-        return window.__salonLastFirebaseLoyaltyPasses;
-      }
       const saved = safeGetItem('backstage_loyalty_passes');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
     } catch {}
     return [];
   });
@@ -337,35 +335,36 @@ export default function App() {
         }
       }
 
-      // 2. Fetch from cloud storage mirror
-      const [salesRes, memberRes] = await Promise.all([
-        fetchSalesFromCloud(),
-        fetchMembershipsFromCloud(),
-      ]);
+      // 2. Fetch from cloud storage mirror ONLY if Supabase is configured
+      if (isSupabaseConfigured()) {
+        const [salesRes, memberRes] = await Promise.all([
+          fetchSalesFromCloud(),
+          fetchMembershipsFromCloud(),
+        ]);
 
-      if (salesRes.orders && salesRes.orders.length > 0) {
-        const cleansed = salesRes.orders.filter((o) => !['#9166', '#9169', '#9170', 'ORD-7793'].includes(o.id));
-        setOrders((prev) => {
-          const merged = [...prev];
-          cleansed.forEach((co) => {
-            if (!merged.some((m) => m.id === co.id)) {
-              merged.push(co);
-            }
+        if (salesRes.orders && salesRes.orders.length > 0) {
+          setOrders((prev) => {
+            const merged = [...prev];
+            salesRes.orders.forEach((co) => {
+              if (!merged.some((m) => m.id === co.id)) {
+                merged.push(co);
+              }
+            });
+            return sortOrdersDescending(migrateOrdersToSequential(merged));
           });
-          return sortOrdersDescending(migrateOrdersToSequential(merged));
-        });
-      }
+        }
 
-      if (memberRes.memberships && memberRes.memberships.length > 0) {
-        setMemberships((prev) => {
-          const merged = [...prev];
-          memberRes.memberships.forEach((cm) => {
-            if (!merged.some((m) => m.id === cm.id || m.clientPhone === cm.clientPhone)) {
-              merged.push(cm);
-            }
+        if (memberRes.memberships && memberRes.memberships.length > 0) {
+          setMemberships((prev) => {
+            const merged = [...prev];
+            memberRes.memberships.forEach((cm) => {
+              if (!merged.some((m) => m.id === cm.id || m.clientPhone === cm.clientPhone)) {
+                merged.push(cm);
+              }
+            });
+            return merged;
           });
-          return merged;
-        });
+        }
       }
     } catch (err) {
       console.log('Cloud sync status:', err);
@@ -463,37 +462,45 @@ export default function App() {
     });
   };
 
-  // Orders Ledger: initialized from Firebase cache or local storage, synced in real-time
+  // 1. Sales History Ledger: Strictly initialized to an empty array [] (First live sale starts at #1)
   const [orders, setOrders] = useState<Order[]>(() => {
     try {
-      if (typeof window !== 'undefined' && window.__salonLastFirebaseOrders && window.__salonLastFirebaseOrders.length > 0) {
-        return sortOrdersDescending(migrateOrdersToSequential(window.__salonLastFirebaseOrders));
+      const isClean = safeGetItem('enreach_delivery_clean_v2');
+      if (!isClean) {
+        safeSetItem('enreach_delivery_clean_v2', 'true');
+        safeRemoveItem('backstage_orders');
+        safeRemoveItem('sales_history');
+        safeRemoveItem('invoices');
+        safeRemoveItem('backstage_cloud_orders');
+        safeRemoveItem('backstage_cart');
+        safeRemoveItem('backstage_number_history');
+        safeRemoveItem('backstage_client_logs');
+        return [];
       }
-      const candidateKeys = ['backstage_orders', 'sales_history', 'invoices', 'backstage_cloud_orders'];
-      for (const key of candidateKeys) {
-        const saved = safeGetItem(key);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return sortOrdersDescending(migrateOrdersToSequential(parsed));
-          }
-        }
+      const saved = safeGetItem('backstage_orders');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
       }
-    } catch {
-      // fallback
-    }
+    } catch {}
     return [];
   });
+  // Sales History alias
+  const salesHistory = orders;
+  const setSalesHistory = setOrders;
 
-  // Active Billing Cart
-  const [cartItems, setCartItems] = useState<CartItem[]>(() => {
-    try {
-      const saved = safeGetItem('backstage_cart');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // 2. Staff Performance History / Service Logs: Strictly initialized to an empty array []
+  const [staffLogs, setStaffLogs] = useState<StaffServiceRecord[]>([]);
+
+  // 3. Number History / Client Phone Logs: Strictly initialized to an empty array []
+  const [numberHistory, setNumberHistory] = useState<{ phone: string; visits: number }[]>([]);
+
+  // 4. Initial Invoice / Order Counter: Hard reset strictly to 0 so the very first order creates Bill #1
+  const [lastOrderId, setLastOrderId] = useState<number>(0);
+  const [currentInvoiceNumber, setCurrentInvoiceNumber] = useState<number>(0);
+
+  // Active Billing Cart: Directly initialized to 100% empty array []
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
 
   // Selected Specialist for quick billing
   const [selectedStylistId, setSelectedStylistId] = useState<string>(STYLISTS[0].id);
@@ -501,16 +508,13 @@ export default function App() {
   // Active Receipt Modal
   const [activeReceiptOrder, setActiveReceiptOrder] = useState<Order | null>(null);
 
+  // Edit Services Mode (Shared with Members & Loyalty section for deletion access)
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+
   // Multi-Device Real-time Firebase Synchronization Listeners
   useEffect(() => {
     // 1. Initial check if Firebase already loaded data
     if (typeof window !== 'undefined') {
-      if (window.__salonLastFirebaseOrders && window.__salonLastFirebaseOrders.length > 0) {
-        setOrders(sortOrdersDescending(window.__salonLastFirebaseOrders));
-      }
-      if (window.__salonLastFirebaseMembers && window.__salonLastFirebaseMembers.length > 0) {
-        setMemberships(window.__salonLastFirebaseMembers);
-      }
       if (window.__salonLastFirebaseStaff && window.__salonLastFirebaseStaff.length > 0) {
         setStaffMembers(window.__salonLastFirebaseStaff);
       }
@@ -612,12 +616,10 @@ export default function App() {
 
   // Persist orders locally so local data safety is strictly guaranteed
   useEffect(() => {
-    if (orders.length > 0) {
-      try {
-        safeSetItem('backstage_orders', JSON.stringify(orders));
-      } catch (e) {
-        console.warn('LocalStorage save failed:', e);
-      }
+    try {
+      safeSetItem('backstage_orders', JSON.stringify(orders));
+    } catch (e) {
+      console.warn('LocalStorage save failed:', e);
     }
   }, [orders]);
 
@@ -677,18 +679,18 @@ export default function App() {
     }
   }, [customCategories]);
 
-  // Initial startup execution: Purge ONLY Members List and Membership / Loyalty Pass History on launch
+  // Initial startup execution: One-time permanent wipeout of old test history (app_reset_v2)
   useEffect(() => {
-    // 1. Immediately wipe local members & loyalty passes synchronously
-    purgeMembersAndLoyaltyPassesOnlySync();
-    setMemberships([]);
-    setLoyaltyPasses([]);
-
-    // 2. Dispatch events asynchronously to clear any in-memory references
-    purgeMembersAndLoyaltyPassesOnly().then(() => {
-      setMemberships([]);
-      setLoyaltyPasses([]);
-    });
+    const wasWiped = runOneTimePermanentWipeoutSync();
+    if (wasWiped) {
+      setOrders([]);
+      setCartItems([]);
+      setStaffMembers(OFFICIAL_STAFF_MEMBERS);
+      setStaffLogs([]);
+      setNumberHistory([]);
+      setLastOrderId(0);
+      setCurrentInvoiceNumber(0);
+    }
   }, []);
 
   // Audio chime for luxury payment completion
@@ -981,6 +983,82 @@ export default function App() {
     }
   };
 
+  // Dynamic Delete Member handler (Permanently removes from state and LocalStorage)
+  const handleDeleteMember = (memberId: string) => {
+    setMemberships((prev) => {
+      const updated = prev.filter((m) => m.id !== memberId);
+      safeSetItem('backstage_memberships', JSON.stringify(updated));
+      return updated;
+    });
+    if (typeof window !== 'undefined' && window.salonFirebase?.deleteMembership) {
+      window.salonFirebase.deleteMembership(memberId);
+    }
+  };
+
+  // Dynamic Delete Loyalty Pass handler (Permanently removes from state and LocalStorage)
+  const handleDeleteLoyaltyPass = (passId: string) => {
+    setLoyaltyPasses((prev) => {
+      const updated = prev.filter((p) => p.id !== passId);
+      safeSetItem('backstage_loyalty_passes', JSON.stringify(updated));
+      return updated;
+    });
+    if (typeof window !== 'undefined' && window.salonFirebase?.deleteLoyaltyPass) {
+      window.salonFirebase.deleteLoyaltyPass(passId);
+    }
+  };
+
+  // Temporary Manual Force-Purge Handlers for Delivery:
+  // 1. Force-Purge All Sales Data
+  const handlePurgeAllSales = () => {
+    setOrders([]);
+    setLastOrderId(0);
+    setCurrentInvoiceNumber(0);
+    safeRemoveItem('backstage_orders');
+    safeRemoveItem('sales_history');
+    safeRemoveItem('invoices');
+    safeRemoveItem('backstage_cloud_orders');
+    safeRemoveItem('backstage_cart');
+    safeSetItem('backstage_orders', '[]');
+
+    if (typeof window !== 'undefined' && window.salonFirebase?.resetOrders) {
+      window.salonFirebase.resetOrders().catch(() => {});
+    }
+    resetCloudOrders().catch(() => {});
+    window.dispatchEvent(new CustomEvent('salon:firebase-orders-updated', { detail: [] }));
+  };
+
+  // 2. Force-Purge All Staff Logs
+  const handlePurgeStaffLogs = () => {
+    setStaffMembers(INITIAL_STAFF_MEMBERS);
+    setStaffLogs([]);
+    safeSetItem('backstage_staff_performance', JSON.stringify(INITIAL_STAFF_MEMBERS));
+
+    if (typeof window !== 'undefined' && window.salonFirebase?.syncStaffMembers) {
+      window.salonFirebase.syncStaffMembers(INITIAL_STAFF_MEMBERS).catch(() => {});
+    }
+    window.dispatchEvent(new CustomEvent('salon:firebase-staff-updated', { detail: INITIAL_STAFF_MEMBERS }));
+  };
+
+  // 3. Force-Purge All Number Logs
+  const handlePurgeNumberLogs = () => {
+    setNumberHistory([]);
+    setOrders([]);
+    setLastOrderId(0);
+    setCurrentInvoiceNumber(0);
+    safeRemoveItem('backstage_number_history');
+    safeRemoveItem('backstage_client_logs');
+    safeRemoveItem('backstage_orders');
+    safeRemoveItem('sales_history');
+    safeRemoveItem('invoices');
+    safeSetItem('backstage_orders', '[]');
+
+    if (typeof window !== 'undefined' && window.salonFirebase?.resetOrders) {
+      window.salonFirebase.resetOrders().catch(() => {});
+    }
+    resetCloudOrders().catch(() => {});
+    window.dispatchEvent(new CustomEvent('salon:firebase-orders-updated', { detail: [] }));
+  };
+
   // 3. SPECIFIC DATA WIPE (PURGE ONLY HISTORIES):
   // Clears Sales History, Membership History, Number History, and Staff History.
   // Order counter resets strictly back to #1, while keeping all 112+ services and salon settings 100% intact.
@@ -1050,6 +1128,8 @@ export default function App() {
             onDeleteService={handleDeleteService}
             customCategories={customCategories}
             onAddCategory={handleAddCategory}
+            isEditMode={isEditMode}
+            onToggleEditMode={setIsEditMode}
           />
         )}
 
@@ -1118,10 +1198,13 @@ export default function App() {
             loyaltyPasses={loyaltyPasses}
             currencySymbol={settings.currencySymbol}
             onAddMember={handleAddMember}
+            onDeleteMember={handleDeleteMember}
             onAddLoyaltyPass={handleAddLoyaltyPass}
+            onDeleteLoyaltyPass={handleDeleteLoyaltyPass}
             onAddAdvanceOrder={(advOrder) => {
               setOrders((prev) => sortOrdersDescending([advOrder, ...prev]));
             }}
+            isEditMode={isEditMode}
           />
         )}
 
@@ -1131,6 +1214,7 @@ export default function App() {
             orders={orders}
             memberships={memberships}
             currencySymbol={settings.currencySymbol}
+            onPurgeNumberLogs={handlePurgeNumberLogs}
           />
         )}
 
@@ -1142,6 +1226,7 @@ export default function App() {
             onViewReceipt={(order) => setActiveReceiptOrder(order)}
             onUpdateOrders={setOrders}
             onResetProductionData={handleResetProductionData}
+            onPurgeAllSales={handlePurgeAllSales}
             onRefreshCloud={loadCloudData}
             isCloudSyncing={isCloudSyncing}
             onLockLedger={() => {
@@ -1157,6 +1242,8 @@ export default function App() {
             staffMembers={staffMembers}
             orders={orders}
             currencySymbol={settings.currencySymbol}
+            onPurgeStaffLogs={handlePurgeStaffLogs}
+            onUpdateStaff={setStaffMembers}
             onLockStaff={() => {
               setIsStaffUnlocked(false);
               setCurrentTab('services');

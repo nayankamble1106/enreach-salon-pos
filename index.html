@@ -302,6 +302,46 @@
             });
           },
 
+          resetMemberships: function() {
+            if (!db) return Promise.resolve();
+            return db.ref('memberships').remove().catch(function(err) {
+              console.warn('[Firebase RTDB] resetMemberships error:', err);
+            });
+          },
+
+          resetLoyaltyPasses: function() {
+            if (!db) return Promise.resolve();
+            return db.ref('loyalty_passes').remove().catch(function(err) {
+              console.warn('[Firebase RTDB] resetLoyaltyPasses error:', err);
+            });
+          },
+
+          deleteMembership: function(memberId) {
+            window.__salonLastFirebaseMembers = (window.__salonLastFirebaseMembers || []).filter(function(m) {
+              return m.id !== memberId;
+            });
+            try {
+              localStorage.setItem('backstage_memberships', JSON.stringify(window.__salonLastFirebaseMembers));
+            } catch (e) {}
+            if (!db) return Promise.resolve();
+            return db.ref('memberships/' + toFirebaseKey(memberId)).remove().catch(function(err) {
+              console.warn('[Firebase RTDB] membership delete warning:', err);
+            });
+          },
+
+          deleteLoyaltyPass: function(passId) {
+            window.__salonLastFirebaseLoyaltyPasses = (window.__salonLastFirebaseLoyaltyPasses || []).filter(function(p) {
+              return p.id !== passId;
+            });
+            try {
+              localStorage.setItem('backstage_loyalty_passes', JSON.stringify(window.__salonLastFirebaseLoyaltyPasses));
+            } catch (e) {}
+            if (!db) return Promise.resolve();
+            return db.ref('loyalty_passes/' + toFirebaseKey(passId)).remove().catch(function(err) {
+              console.warn('[Firebase RTDB] loyalty pass delete warning:', err);
+            });
+          },
+
           syncServices: function(servicesList) {
             if (!Array.isArray(servicesList)) return Promise.resolve();
             window.__salonLastFirebaseServices = servicesList;

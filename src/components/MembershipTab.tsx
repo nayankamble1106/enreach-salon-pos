@@ -35,8 +35,11 @@ interface MembershipTabProps {
   loyaltyPasses?: LoyaltyPass[];
   currencySymbol: string;
   onAddMember?: (member: MembershipRecord) => void;
+  onDeleteMember?: (memberId: string) => void;
   onAddLoyaltyPass?: (pass: LoyaltyPass) => void;
+  onDeleteLoyaltyPass?: (passId: string) => void;
   onAddAdvanceOrder?: (order: Order) => void;
+  isEditMode?: boolean;
 }
 
 const MEMBERSHIP_PLANS = [
@@ -158,9 +161,16 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
   loyaltyPasses: propLoyaltyPasses,
   currencySymbol,
   onAddMember,
+  onDeleteMember,
   onAddLoyaltyPass,
+  onDeleteLoyaltyPass,
   onAddAdvanceOrder,
+  isEditMode = false,
 }) => {
+  // State for permanent deletion modals
+  const [memberToDelete, setMemberToDelete] = useState<MembershipRecord | null>(null);
+  const [passToDelete, setPassToDelete] = useState<LoyaltyPass | null>(null);
+
   // 1. SUB-TABS LAYOUT: '💳 Regular Memberships' vs '🎁 Loyalty Member Passes'
   const [mainSubTab, setMainSubTab] = useState<'memberships' | 'loyalty_passes'>('memberships');
 
@@ -183,13 +193,6 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
   // Internal Loyalty Passes state with live sync
   const [internalLoyaltyPasses, setInternalLoyaltyPasses] = useState<LoyaltyPass[]>(() => {
     if (propLoyaltyPasses && propLoyaltyPasses.length > 0) return propLoyaltyPasses;
-    if (typeof window !== 'undefined' && window.__salonLastFirebaseLoyaltyPasses && window.__salonLastFirebaseLoyaltyPasses.length > 0) {
-      return window.__salonLastFirebaseLoyaltyPasses;
-    }
-    try {
-      const saved = localStorage.getItem('backstage_loyalty_passes');
-      if (saved) return JSON.parse(saved);
-    } catch {}
     return [];
   });
 
@@ -556,6 +559,25 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
       )
     : [];
 
+  const handleConfirmDeleteMember = () => {
+    if (!memberToDelete) return;
+    if (onDeleteMember) {
+      onDeleteMember(memberToDelete.id);
+    }
+    setSuccessToastMessage(`VIP Member "${memberToDelete.clientName}" permanently deleted.`);
+    setMemberToDelete(null);
+  };
+
+  const handleConfirmDeletePass = () => {
+    if (!passToDelete) return;
+    if (onDeleteLoyaltyPass) {
+      onDeleteLoyaltyPass(passToDelete.id);
+    }
+    setInternalLoyaltyPasses((prev) => prev.filter((p) => p.id !== passToDelete.id));
+    setSuccessToastMessage(`Loyalty Pass for "${passToDelete.clientName}" permanently deleted.`);
+    setPassToDelete(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* Toast Notification */}
@@ -572,6 +594,18 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Edit Mode Active Banner (Linked to Edit Services Toggle) */}
+      {isEditMode && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3.5 sm:p-4 flex items-center justify-between gap-3 text-xs sm:text-sm text-amber-950 font-semibold shadow-xs animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+            <span>
+              <strong>Edit Services Mode Active:</strong> Red delete buttons (🗑️) are unlocked on Member and Loyalty Pass cards. Click to permanently remove records.
+            </span>
+          </div>
         </div>
       )}
 
@@ -738,13 +772,13 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
               </button>
             </div>
           ) : (
-            filteredMembers.map((member) => {
+            filteredMembers.map((member, idx) => {
               const daysLeft = getDaysRemaining(member.expiryDate);
               const isActive = daysLeft > 0;
 
               return (
                 <div
-                  key={member.id}
+                  key={`member-${member.id || idx}-${idx}`}
                   onClick={() => setSelectedMember(member)}
                   className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 shadow-xs hover:border-emerald-500 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden"
                 >
@@ -769,10 +803,25 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
                         <span>{isActive ? `Active - ${daysLeft} Days Left` : 'Expired'}</span>
                       </span>
 
-                      <span className="text-xs font-semibold text-emerald-700 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                        <span>View History</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {isEditMode && (
+                          <button
+                            type="button"
+                            title="Delete VIP Member"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMemberToDelete(member);
+                            }}
+                            className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <span className="text-xs font-semibold text-emerald-700 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                          <span>View History</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </span>
+                      </div>
                     </div>
 
                     <h3 className="text-xl font-bold text-slate-900 group-hover:text-emerald-950 transition-colors">
@@ -833,7 +882,7 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
               )}
             </div>
           ) : (
-            filteredPasses.map((pass) => {
+            filteredPasses.map((pass, idx) => {
               const isCompleted = pass.status === 'Completed' || pass.remainingVisits === 0;
               const isFinalBonusVisit = pass.remainingVisits === 1 && !isCompleted;
               const usedVisits = Math.max(0, pass.totalVisits - pass.remainingVisits);
@@ -841,7 +890,7 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
 
               return (
                 <div
-                  key={pass.id}
+                  key={`pass-${pass.id || idx}-${idx}`}
                   onClick={() => isCompleted && setSelectedHistoryPass(pass)}
                   className={`bg-white border rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col justify-between relative overflow-hidden transition-all ${
                     isCompleted
@@ -876,14 +925,29 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
                         </span>
                       </span>
 
-                      {isCompleted ? (
-                        <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-                          <span>Logs</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </span>
-                      ) : (
-                        <span className="text-[11px] font-mono text-slate-400">{pass.id}</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {isEditMode && (
+                          <button
+                            type="button"
+                            title="Delete Loyalty Pass"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPassToDelete(pass);
+                            }}
+                            className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {isCompleted ? (
+                          <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                            <span>Logs</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-mono text-slate-400">{pass.id}</span>
+                        )}
+                      </div>
                     </div>
 
                     <h3 className="text-lg font-bold text-slate-900">{pass.clientName}</h3>
@@ -1499,8 +1563,8 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
                         </td>
                       </tr>
                     ) : (
-                      memberOrders.map((order) => (
-                        <tr key={order.id} className="hover:bg-slate-50/60 transition-colors">
+                      memberOrders.map((order, mIdx) => (
+                        <tr key={`member-visit-${order.id || 'ord'}-${order.date || ''}-${mIdx}`} className="hover:bg-slate-50/60 transition-colors">
                           <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap font-medium">
                             {formatIndianDateTime(order.date)}
                           </td>
@@ -1527,6 +1591,78 @@ export const MembershipTab: React.FC<MembershipTabProps> = ({
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Member Confirmation Modal */}
+      {memberToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 relative animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Delete VIP Member</h3>
+                <p className="text-xs text-slate-500">Permanent record removal</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 mb-5 leading-relaxed">
+              Are you sure you want to permanently delete member <strong className="text-slate-900">{memberToDelete.clientName}</strong> ({memberToDelete.clientPhone})? This will permanently delete the membership record.
+            </p>
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setMemberToDelete(null)}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteMember}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 text-white shadow-xs transition-colors cursor-pointer"
+              >
+                Yes, Delete Member
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Loyalty Pass Confirmation Modal */}
+      {passToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 relative animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Delete Loyalty Pass</h3>
+                <p className="text-xs text-slate-500">Permanent pass removal</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 mb-5 leading-relaxed">
+              Are you sure you want to permanently delete the Loyalty Pass for <strong className="text-slate-900">{passToDelete.clientName}</strong> ({passToDelete.id})? This cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setPassToDelete(null)}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeletePass}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 text-white shadow-xs transition-colors cursor-pointer"
+              >
+                Yes, Delete Pass
               </button>
             </div>
           </div>
