@@ -42,6 +42,8 @@ interface StaffTabProps {
   currencySymbol: string;
   onLockStaff: () => void;
   onUpdateStaff?: (updatedStaff: StaffMember[]) => void;
+  onDeleteStaffRecord?: (staffId: string, recordId: string) => void;
+  onResetStaffSales?: (staffId: string) => void;
   onPurgeStaffLogs?: () => void;
 }
 
@@ -51,11 +53,53 @@ export const StaffTab: React.FC<StaffTabProps> = ({
   currencySymbol,
   onLockStaff,
   onUpdateStaff,
+  onDeleteStaffRecord,
+  onResetStaffSales,
   onPurgeStaffLogs,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [selectedStaffModal, setSelectedStaffModal] = useState<StaffMember | null>(null);
   const [purgeToastMessage, setPurgeToastMessage] = useState<string | null>(null);
+
+  const handleDeleteSingleStaffRecord = (staffId: string, recordId: string) => {
+    if (onDeleteStaffRecord) {
+      onDeleteStaffRecord(staffId, recordId);
+    } else {
+      const updated = staffMembers.map((s) => {
+        if (s.id === staffId || s.name.toLowerCase() === staffId.toLowerCase()) {
+          const newHist = (s.history || []).filter((h) => h.id !== recordId);
+          const newSales = newHist.reduce((sum, h) => sum + h.amount, 0);
+          return { ...s, history: newHist, totalSalesThisMonth: newSales };
+        }
+        return s;
+      });
+      if (onUpdateStaff) onUpdateStaff(updated);
+      try {
+        localStorage.setItem('backstage_staff_performance', JSON.stringify(updated));
+      } catch {}
+    }
+    setPurgeToastMessage('🗑️ Staff service log record permanently deleted.');
+    setTimeout(() => setPurgeToastMessage(null), 3500);
+  };
+
+  const handleResetSingleStaff = (staffId: string) => {
+    if (onResetStaffSales) {
+      onResetStaffSales(staffId);
+    } else {
+      const updated = staffMembers.map((s) => {
+        if (s.id === staffId || s.name.toLowerCase() === staffId.toLowerCase()) {
+          return { ...s, history: [], totalSalesThisMonth: 0 };
+        }
+        return s;
+      });
+      if (onUpdateStaff) onUpdateStaff(updated);
+      try {
+        localStorage.setItem('backstage_staff_performance', JSON.stringify(updated));
+      } catch {}
+    }
+    setPurgeToastMessage('🔄 Staff performance reset to 0.');
+    setTimeout(() => setPurgeToastMessage(null), 3500);
+  };
 
   const handlePurgeStaffLogsClick = () => {
     if (onPurgeStaffLogs) {
@@ -419,7 +463,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl text-right">
             <span className="text-[10px] uppercase font-bold text-amber-800 block">
               Team Revenue ({activeBounds.label})

@@ -124,6 +124,7 @@ export interface SalonFirebaseBridge {
   syncLoyaltyPass?: (pass: LoyaltyPass) => Promise<unknown>;
   deleteMembership?: (memberId: string) => Promise<unknown>;
   deleteLoyaltyPass?: (passId: string) => Promise<unknown>;
+  deleteOrder?: (orderId: string) => Promise<unknown>;
   getLoyaltyPasses?: () => LoyaltyPass[];
   getOrders: () => Order[];
   getMemberships: () => MembershipRecord[];

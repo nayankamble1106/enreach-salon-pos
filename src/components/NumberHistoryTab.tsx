@@ -14,6 +14,8 @@ interface NumberHistoryTabProps {
   memberships: MembershipRecord[];
   currencySymbol: string;
   onPurgeNumberLogs?: () => void;
+  onDeleteClientByPhone?: (phone: string) => void;
+  onDeleteOrder?: (orderId: string) => void;
 }
 
 export const NumberHistoryTab: React.FC<NumberHistoryTabProps> = ({
@@ -21,12 +23,52 @@ export const NumberHistoryTab: React.FC<NumberHistoryTabProps> = ({
   memberships,
   currencySymbol,
   onPurgeNumberLogs,
+  onDeleteClientByPhone,
+  onDeleteOrder,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedNumber, setCopiedNumber] = useState<string | null>(null);
   const [selectedClientPhone, setSelectedClientPhone] = useState<string | null>(null);
   const [purgeToastMessage, setPurgeToastMessage] = useState<string | null>(null);
+
+  const handleDeleteClient = (phone: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (onDeleteClientByPhone) {
+      onDeleteClientByPhone(phone);
+    } else {
+      try {
+        const cleanP = phone.replace(/\D/g, '');
+        const updated = orders.filter((o) => {
+          const oClean = (o.clientPhone || '').replace(/\D/g, '');
+          if (cleanP && oClean) {
+            return cleanP !== oClean && !cleanP.endsWith(oClean) && !oClean.endsWith(cleanP);
+          }
+          return o.clientPhone?.replace(/\s+/g, '') !== phone.replace(/\s+/g, '');
+        });
+        localStorage.setItem('backstage_orders', JSON.stringify(updated));
+      } catch {}
+    }
+    if (selectedClientPhone === phone) {
+      setSelectedClientPhone(null);
+    }
+    setPurgeToastMessage(`🗑️ Deleted all history for ${phone}.`);
+    setTimeout(() => setPurgeToastMessage(null), 4000);
+  };
+
+  const handleDeleteSingleOrder = (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (onDeleteOrder) {
+      onDeleteOrder(orderId);
+    } else {
+      try {
+        const updated = orders.filter((o) => o.id !== orderId);
+        localStorage.setItem('backstage_orders', JSON.stringify(updated));
+      } catch {}
+    }
+    setPurgeToastMessage(`🗑️ Invoice ${orderId} permanently deleted.`);
+    setTimeout(() => setPurgeToastMessage(null), 4000);
+  };
 
   const handlePurgeNumberLogsClick = () => {
     if (onPurgeNumberLogs) {
@@ -435,7 +477,7 @@ export const NumberHistoryTab: React.FC<NumberHistoryTabProps> = ({
                         {currencySymbol}{client.totalSpent.toLocaleString('en-IN')}
                       </td>
 
-                      {/* Interactive Actions (Inspect History + Copy) */}
+                      {/* Interactive Actions (Inspect History + Copy + Delete) */}
                       <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1.5">
                           <button

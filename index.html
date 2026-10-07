@@ -296,9 +296,26 @@
           },
 
           resetOrders: function() {
+            window.__salonLastFirebaseOrders = [];
+            try {
+              localStorage.setItem('backstage_orders', '[]');
+            } catch (e) {}
             if (!db) return Promise.resolve();
             return db.ref('orders').remove().catch(function(err) {
               console.warn('[Firebase RTDB] resetOrders error:', err);
+            });
+          },
+
+          deleteOrder: function(orderId) {
+            window.__salonLastFirebaseOrders = (window.__salonLastFirebaseOrders || []).filter(function(o) {
+              return o.id !== orderId;
+            });
+            try {
+              localStorage.setItem('backstage_orders', JSON.stringify(window.__salonLastFirebaseOrders));
+            } catch (e) {}
+            if (!db) return Promise.resolve();
+            return db.ref('orders/' + toFirebaseKey(orderId)).remove().catch(function(err) {
+              console.warn('[Firebase RTDB] order delete warning:', err);
             });
           },
 

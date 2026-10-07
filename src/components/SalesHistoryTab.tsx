@@ -39,6 +39,7 @@ interface SalesHistoryTabProps {
   currencySymbol: string;
   onViewReceipt: (order: Order) => void;
   onUpdateOrders: React.Dispatch<React.SetStateAction<Order[]>>;
+  onDeleteOrder?: (orderId: string) => void;
   onResetProductionData?: () => Promise<void> | void;
   onPurgeAllSales?: () => void;
   onLockLedger?: () => void;
@@ -53,6 +54,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
   currencySymbol,
   onViewReceipt,
   onUpdateOrders,
+  onDeleteOrder,
   onResetProductionData,
   onPurgeAllSales,
   onLockLedger,
@@ -71,6 +73,48 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
     orders: Order[];
   } | null>(null);
   const [breakdownSearchQuery, setBreakdownSearchQuery] = useState('');
+
+  const handleDeleteSingleOrder = (orderId: string) => {
+    if (onDeleteOrder) {
+      onDeleteOrder(orderId);
+    } else {
+      onUpdateOrders((prev) => {
+        const updated = prev.filter((o) => o.id !== orderId);
+        try {
+          localStorage.setItem('backstage_orders', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+    }
+    setSelectedBreakdown((prev) => {
+      if (!prev) return null;
+      const updated = prev.orders.filter((o) => o.id !== orderId);
+      return {
+        ...prev,
+        orders: updated,
+        subtitle: `${updated.length} total transactions in period`,
+      };
+    });
+    setResetToastMessage(`🗑️ Invoice ${orderId} permanently deleted.`);
+    setTimeout(() => setResetToastMessage(null), 4000);
+  };
+
+  const handleResetOrderCounterToZero = () => {
+    onUpdateOrders([]);
+    try {
+      localStorage.removeItem('backstage_orders');
+      localStorage.removeItem('sales_history');
+      localStorage.removeItem('invoices');
+      localStorage.removeItem('backstage_cloud_orders');
+      localStorage.removeItem('backstage_cart');
+      localStorage.setItem('backstage_orders', '[]');
+    } catch {}
+    if (onResetProductionData) {
+      onResetProductionData();
+    }
+    setResetToastMessage('🔄 Order sequence counter reset to 0! The next invoice will start at #1.');
+    setTimeout(() => setResetToastMessage(null), 5000);
+  };
 
   const handlePurgeAllSalesClick = () => {
     if (onPurgeAllSales) {
@@ -399,7 +443,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex items-center gap-3 self-start sm:self-auto flex-wrap">
           {onLockLedger && (
             <button
               type="button"

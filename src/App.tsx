@@ -1007,6 +1007,198 @@ export default function App() {
     }
   };
 
+  // Granular Delete Handlers for Edit Mode:
+  // 1. Delete individual sale record (Permanently wipes from state, localStorage & Firebase RTDB)
+  const handleDeleteOrder = (orderId: string) => {
+    setOrders((prev) => {
+      const updated = prev.filter((o) => o.id !== orderId);
+      safeSetItem('backstage_orders', JSON.stringify(updated));
+      if (typeof window !== 'undefined' && window.salonFirebase?.deleteOrder) {
+        window.salonFirebase.deleteOrder(orderId);
+      }
+      if (updated.length === 0) {
+        setLastOrderId(0);
+        setCurrentInvoiceNumber(0);
+        safeSetItem('backstage_orders', '[]');
+        safeRemoveItem('sales_history');
+        safeRemoveItem('invoices');
+        safeRemoveItem('backstage_cloud_orders');
+      }
+      return updated;
+    });
+
+    // Synchronize removal with any stored staff service history
+    setStaffMembers((prev) => {
+      let modified = false;
+      const updated = prev.map((s) => {
+        const newHist = (s.history || []).filter((h) => !h.id.includes(orderId));
+        if (newHist.length !== (s.history || []).length) {
+          modified = true;
+          const newSales = newHist.reduce((sum, h) => sum + h.amount, 0);
+          return { ...s, history: newHist, totalSalesThisMonth: newSales };
+        }
+        return s;
+      });
+      if (modified) {
+        safeSetItem('backstage_staff_performance', JSON.stringify(updated));
+      }
+      return updated;
+    });
+  };
+
+  // 2. Delete all records for a client phone number
+  const handleDeleteClientByPhone = (phone: string) => {
+    const cleanP = phone.replace(/\D/g, '');
+    const deletedOrderIds: string[] = [];
+    setOrders((prev) => {
+      const updated = prev.filter((o) => {
+        const oClean = (o.clientPhone || '').replace(/\D/g, '');
+        const isMatch =
+          (cleanP && oClean && (cleanP === oClean || cleanP.endsWith(oClean) || oClean.endsWith(cleanP))) ||
+          o.clientPhone?.replace(/\s+/g, '') === phone.replace(/\s+/g, '');
+        if (isMatch) {
+          deletedOrderIds.push(o.id);
+          return false;
+        }
+        return true;
+      });
+      safeSetItem('backstage_orders', JSON.stringify(updated));
+      if (typeof window !== 'undefined' && window.salonFirebase?.deleteOrder) {
+        deletedOrderIds.forEach((id) => window.salonFirebase?.deleteOrder?.(id));
+      }
+      if (updated.length === 0) {
+        setLastOrderId(0);
+        setCurrentInvoiceNumber(0);
+        safeSetItem('backstage_orders', '[]');
+        safeRemoveItem('sales_history');
+        safeRemoveItem('invoices');
+        safeRemoveItem('backstage_cloud_orders');
+      }
+      return updated;
+    });
+
+    if (deletedOrderIds.length > 0) {
+      setStaffMembers((prev) => {
+        let modified = false;
+        const updated = prev.map((s) => {
+          const newHist = (s.history || []).filter(
+            (h) => !deletedOrderIds.some((dId) => h.id.includes(dId))
+          );
+          if (newHist.length !== (s.history || []).length) {
+            modified = true;
+            const newSales = newHist.reduce((sum, h) => sum + h.amount, 0);
+            return { ...s, history: newHist, totalSalesThisMonth: newSales };
+          }
+          return s;
+        });
+        if (modified) {
+          safeSetItem('backstage_staff_performance', JSON.stringify(updated));
+        }
+        return updated;
+      });
+    }
+  };
+
+  // 3. Delete individual staff service log record (Removes log from ledger & staff profile without deleting the staff member)
+  const handleDeleteStaffRecord = (staffId: string, recordId: string) => {
+    // Check if recordId is derived from an order
+    const orderMatch = recordId.match(/^ord-rec-([^-]+)-/);
+    const orderId = orderMatch ? orderMatch[1] : null;
+
+    if (orderId) {
+      setOrders((prev) => {
+        const updated = prev.filter((o) => o.id !== orderId);
+        safeSetItem('backstage_orders', JSON.stringify(updated));
+        if (typeof window !== 'undefined' && window.salonFirebase?.deleteOrder) {
+          window.salonFirebase.deleteOrder(orderId);
+        }
+        if (updated.length === 0) {
+          setLastOrderId(0);
+          setCurrentInvoiceNumber(0);
+          safeSetItem('backstage_orders', '[]');
+          safeRemoveItem('sales_history');
+          safeRemoveItem('invoices');
+          safeRemoveItem('backstage_cloud_orders');
+        }
+        return updated;
+      });
+    }
+
+    // Always update staff member history (Keeps all 6 staff profiles intact)
+    setStaffMembers((prev) => {
+      const updated = prev.map((s) => {
+        if (s.id === staffId || s.name.toLowerCase() === staffId.toLowerCase()) {
+          const newHistory = (s.history || []).filter(
+            (h) => h.id !== recordId && (!orderId || !h.id.includes(orderId))
+          );
+          const newSales = newHistory.reduce((sum, h) => sum + h.amount, 0);
+          return {
+            ...s,
+            history: newHistory,
+            totalSalesThisMonth: newSales,
+          };
+        }
+        return s;
+      });
+      safeSetItem('backstage_staff_performance', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  // 4. Reset a specific staff member's sales and logs to 0 (Keeps staff member profile 100% intact)
+  const handleResetStaffSales = (staffId: string) => {
+    const targetStaff = staffMembers.find(
+      (s) => s.id === staffId || s.name.toLowerCase() === staffId.toLowerCase()
+    );
+    const staffName = targetStaff ? targetStaff.name : null;
+
+    if (staffName) {
+      const removedOrderIds: string[] = [];
+      setOrders((prev) => {
+        const updated = prev.filter((o) => {
+          const isMainStaff = o.staffName && o.staffName.toLowerCase() === staffName.toLowerCase();
+          const hasStaffItem = (o.items || []).some(
+            (i) => i.stylistName && i.stylistName.toLowerCase() === staffName.toLowerCase()
+          );
+          if (isMainStaff || hasStaffItem) {
+            removedOrderIds.push(o.id);
+            return false;
+          }
+          return true;
+        });
+        safeSetItem('backstage_orders', JSON.stringify(updated));
+        if (typeof window !== 'undefined' && window.salonFirebase?.deleteOrder) {
+          removedOrderIds.forEach((id) => window.salonFirebase?.deleteOrder?.(id));
+        }
+        if (updated.length === 0) {
+          setLastOrderId(0);
+          setCurrentInvoiceNumber(0);
+          safeSetItem('backstage_orders', '[]');
+          safeRemoveItem('sales_history');
+          safeRemoveItem('invoices');
+          safeRemoveItem('backstage_cloud_orders');
+        }
+        return updated;
+      });
+    }
+
+    // Reset this staff member's history and sales to 0 (Preserves all 6 staff profiles)
+    setStaffMembers((prev) => {
+      const updated = prev.map((s) => {
+        if (s.id === staffId || s.name.toLowerCase() === staffId.toLowerCase()) {
+          return {
+            ...s,
+            history: [],
+            totalSalesThisMonth: 0,
+          };
+        }
+        return s;
+      });
+      safeSetItem('backstage_staff_performance', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   // Temporary Manual Force-Purge Handlers for Delivery:
   // 1. Force-Purge All Sales Data
   const handlePurgeAllSales = () => {
@@ -1214,7 +1406,8 @@ export default function App() {
             orders={orders}
             memberships={memberships}
             currencySymbol={settings.currencySymbol}
-            onPurgeNumberLogs={handlePurgeNumberLogs}
+            onDeleteClientByPhone={handleDeleteClientByPhone}
+            onDeleteOrder={handleDeleteOrder}
           />
         )}
 
@@ -1225,6 +1418,7 @@ export default function App() {
             currencySymbol={settings.currencySymbol}
             onViewReceipt={(order) => setActiveReceiptOrder(order)}
             onUpdateOrders={setOrders}
+            onDeleteOrder={handleDeleteOrder}
             onResetProductionData={handleResetProductionData}
             onPurgeAllSales={handlePurgeAllSales}
             onRefreshCloud={loadCloudData}
@@ -1242,7 +1436,8 @@ export default function App() {
             staffMembers={staffMembers}
             orders={orders}
             currencySymbol={settings.currencySymbol}
-            onPurgeStaffLogs={handlePurgeStaffLogs}
+            onDeleteStaffRecord={handleDeleteStaffRecord}
+            onResetStaffSales={handleResetStaffSales}
             onUpdateStaff={setStaffMembers}
             onLockStaff={() => {
               setIsStaffUnlocked(false);
