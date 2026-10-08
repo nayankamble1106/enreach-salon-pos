@@ -13,7 +13,11 @@
  * - Enforces Order ID counter reset strictly back to 0 -> next bill is "#1".
  */
 
-import { resetCloudOrders } from '../services/supabase';
+import {
+  resetCloudOrders,
+  purgeSupabaseDummyTables,
+  ensureSupabaseDummyPurgedOnce,
+} from '../services/supabase';
 
 export const OFFICIAL_STAFF_MEMBERS = [
   { id: 'staff-1', name: 'Kunal', role: 'Senior Hair Stylist', totalSalesThisMonth: 0, history: [] },
@@ -31,12 +35,25 @@ export function purgeOnlyHistoriesSync(): void {
   if (typeof window === 'undefined') return;
 
   try {
-    // 1. PURGE SALES HISTORY
+    localStorage.removeItem('enreach_supabase_disconnected');
+    // 1. PURGE SALES HISTORY (All cached keys)
+    localStorage.removeItem('sales');
+    localStorage.removeItem('orders');
+    localStorage.removeItem('staffLogs');
+    localStorage.removeItem('numberLogs');
     localStorage.removeItem('backstage_orders');
     localStorage.removeItem('sales_history');
     localStorage.removeItem('invoices');
     localStorage.removeItem('backstage_cloud_orders');
     localStorage.removeItem('backstage_cart');
+    localStorage.setItem('backstage_orders', '[]');
+
+    // Clear session storage as well
+    if (typeof sessionStorage !== 'undefined') {
+      try {
+        sessionStorage.clear();
+      } catch {}
+    }
 
     // 2. PURGE NUMBER HISTORY / TEMPORARY CLIENT LOGS
     localStorage.removeItem('backstage_number_history');
@@ -50,7 +67,7 @@ export function purgeOnlyHistoriesSync(): void {
     if (window.__salonLastFirebaseStaff) window.__salonLastFirebaseStaff = OFFICIAL_STAFF_MEMBERS;
 
     localStorage.setItem('enreach_production_clean_v1', 'true');
-    console.log('🧹 [Startup Purge] Sales, Number History & Staff logs purged. Members, Services and Settings intact. Next Order: #1');
+    console.log('🧹 [Startup Purge] Supabase disconnected, Sales, Number History & Staff logs purged. Members, Services and Settings intact. Next Order: #1');
   } catch (err) {
     console.warn('[Startup Purge] Warning:', err);
   }
@@ -77,23 +94,32 @@ export async function purgeOnlyHistories(): Promise<{ success: boolean; message:
       }
     }
 
-    // Reset cloud orders in Supabase if configured
-    await resetCloudOrders();
+    // Reset cloud orders & staff services in Supabase if configured
+    await purgeSupabaseDummyTables();
 
     // Dispatch system events for live UI reactivity
     window.dispatchEvent(new CustomEvent('salon:firebase-orders-updated', { detail: [] }));
     window.dispatchEvent(new CustomEvent('salon:firebase-staff-updated', { detail: OFFICIAL_STAFF_MEMBERS }));
 
-    console.log('✅ Specific histories purged successfully across storage & cloud. Order counter reset to 0 -> #1.');
+    console.log('✅ Specific histories purged successfully across storage & Supabase cloud. Order counter reset to 0 -> #1.');
     return {
       success: true,
-      message: 'Histories purged successfully. Next order strictly starts at #1. Members, Services & Settings preserved.',
+      message: 'Histories purged successfully from LocalStorage and Supabase. Next order strictly starts at #1. Members, Services & Settings preserved.',
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('❌ Failed to purge histories:', msg);
     return { success: false, message: msg };
   }
+}
+
+/**
+ * ONE-TIME ASYNC WIPEOUT OF SUPABASE DUMMY ROWS:
+ * Wipes existing initial dummy/test rows from Supabase database tables ONCE.
+ * Keeps Supabase Cloud Sync 100% active for all future live data.
+ */
+export async function runOneTimeSupabaseWipeout(): Promise<{ purged: boolean; message: string }> {
+  return ensureSupabaseDummyPurgedOnce();
 }
 
 /**
@@ -119,6 +145,10 @@ export function runOneTimePermanentWipeoutSync(): boolean {
     }
 
     // 1. Sales History
+    localStorage.removeItem('sales');
+    localStorage.removeItem('orders');
+    localStorage.removeItem('staffLogs');
+    localStorage.removeItem('numberLogs');
     localStorage.removeItem('backstage_orders');
     localStorage.removeItem('sales_history');
     localStorage.removeItem('invoices');

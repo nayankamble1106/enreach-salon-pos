@@ -5,6 +5,8 @@ import {
   saveSupabaseConfig,
   testSupabaseConnection,
   isSupabaseConfigured,
+  ensureSupabaseDummyPurgedOnce,
+  disconnectSupabase,
 } from '../services/supabase';
 
 interface SupabaseConfigModalProps {
@@ -49,11 +51,24 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
     e.preventDefault();
     setIsSaving(true);
     saveSupabaseConfig(url, anonKey);
+    try {
+      await ensureSupabaseDummyPurgedOnce();
+    } catch {
+      // Non-blocking
+    }
     setTimeout(() => {
       setIsSaving(false);
       onConfigSaved();
       onClose();
     }, 300);
+  };
+
+  const handleDisconnect = () => {
+    disconnectSupabase();
+    setUrl('');
+    setAnonKey('');
+    setTestResult({ success: true, message: 'Supabase disconnected. All credentials removed.' });
+    onConfigSaved();
   };
 
   const isConfigured = isSupabaseConfigured();
@@ -165,7 +180,7 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
           </div>
 
           {/* Actions */}
-          <div className="flex gap-2 pt-2">
+          <div className="flex flex-wrap gap-2 pt-2">
             <button
               type="button"
               onClick={handleTest}
@@ -175,6 +190,16 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
               {isTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               <span>Test Connection</span>
             </button>
+
+            {(isConfigured || url || anonKey) && (
+              <button
+                type="button"
+                onClick={handleDisconnect}
+                className="py-2.5 px-3 border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Disconnect
+              </button>
+            )}
 
             <button
               type="submit"

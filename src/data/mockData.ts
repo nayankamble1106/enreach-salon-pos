@@ -161,6 +161,16 @@ export const SALON_SERVICES: SalonService[] = [
 export const INITIAL_ORDERS: Order[] = [];
 export const INITIAL_MEMBERSHIPS: MembershipRecord[] = [];
 
+// Explicit Initial State Declarations set strictly to [] and 0
+export const initialSales: Order[] = [];
+export const initialOrders: Order[] = [];
+export const mockSales: Order[] = [];
+export const initialStaffLogs: unknown[] = [];
+export const initialNumberLogs: unknown[] = [];
+export const totalRevenue = 0;
+export const totalInvoices = 0;
+export const totalStaffSales = 0;
+
 export const INITIAL_STAFF: StaffMember[] = [
   {
     id: 'staff-1',

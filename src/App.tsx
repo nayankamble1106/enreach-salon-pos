@@ -22,6 +22,13 @@ import {
   syncStaffServiceToCloud,
   resetCloudOrders,
   isSupabaseConfigured,
+  ensureSupabaseDummyPurgedOnce,
+  purgeSupabaseDummyTables,
+  deleteOrderFromCloud,
+  deleteClientOrdersFromCloud,
+  deleteStaffServiceFromCloud,
+  forceClearHistoryLocalStorage,
+  isLiveOrder,
 } from './services/supabase';
 import { getNextOrderNumber, sortOrdersDescending, migrateOrdersToSequential } from './utils/orderUtils';
 import { formatIndianDate } from './utils/dateUtils';
@@ -108,24 +115,13 @@ export default function App() {
     description: 'Enter confidential authorization PIN to access transactions & revenue ledgers.',
   });
 
-  // Staff Performance Dashboard state (Directly initialized to 0 sales and empty staff history logs [])
+  // Staff Performance Dashboard state: strictly initialized to 0 sales and empty staff history logs []
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>(() => {
-    try {
-      const isClean = safeGetItem('enreach_delivery_clean_v2');
-      if (!isClean) {
-        safeSetItem('enreach_delivery_clean_v2', 'true');
-        safeSetItem('backstage_staff_performance', JSON.stringify(INITIAL_STAFF_MEMBERS));
-        return INITIAL_STAFF_MEMBERS;
-      }
-      const saved = safeGetItem('backstage_staff_performance');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.filter((s) => s && s.name !== 'Aman');
-        }
-      }
-    } catch {}
-    return INITIAL_STAFF_MEMBERS;
+    return INITIAL_STAFF_MEMBERS.map((s) => ({
+      ...s,
+      totalSalesThisMonth: 0,
+      history: [],
+    }));
   });
 
   // Selected staff for Billing / Cart (Defaults to official staff Kunal)
@@ -296,11 +292,14 @@ export default function App() {
   const loadCloudData = async () => {
     setIsCloudSyncing(true);
     try {
-      // 1. Instantly pull from Firebase Realtime DB if available
+      // 1. Instantly pull from Firebase Realtime DB if available (live records only)
       if (typeof window !== 'undefined' && window.salonFirebase) {
         const fbOrders = window.salonFirebase.getOrders();
-        if (fbOrders.length > 0) {
-          setOrders(sortOrdersDescending(migrateOrdersToSequential(fbOrders)));
+        const liveFbOrders = (fbOrders || []).filter(isLiveOrder);
+        if (liveFbOrders.length > 0) {
+          const sorted = sortOrdersDescending(migrateOrdersToSequential(liveFbOrders));
+          setOrders(sorted);
+          setSales(sorted);
         }
         const fbMembers = window.salonFirebase.getMemberships();
         if (fbMembers.length > 0) {
@@ -337,21 +336,29 @@ export default function App() {
 
       // 2. Fetch from cloud storage mirror ONLY if Supabase is configured
       if (isSupabaseConfigured()) {
+        // Enforce ONE-TIME dummy records purge before reading cloud data so remote dummy rows cannot re-populate
+        await ensureSupabaseDummyPurgedOnce();
+
         const [salesRes, memberRes] = await Promise.all([
           fetchSalesFromCloud(),
           fetchMembershipsFromCloud(),
         ]);
 
         if (salesRes.orders && salesRes.orders.length > 0) {
-          setOrders((prev) => {
-            const merged = [...prev];
-            salesRes.orders.forEach((co) => {
-              if (!merged.some((m) => m.id === co.id)) {
-                merged.push(co);
-              }
+          const liveOrders = salesRes.orders.filter(isLiveOrder);
+          if (liveOrders.length > 0) {
+            setOrders((prev) => {
+              const merged = [...prev];
+              liveOrders.forEach((co) => {
+                if (!merged.some((m) => m.id === co.id)) {
+                  merged.push(co);
+                }
+              });
+              const sorted = sortOrdersDescending(migrateOrdersToSequential(merged));
+              setSales(sorted);
+              return sorted;
             });
-            return sortOrdersDescending(migrateOrdersToSequential(merged));
-          });
+          }
         }
 
         if (memberRes.memberships && memberRes.memberships.length > 0) {
@@ -462,37 +469,17 @@ export default function App() {
     });
   };
 
-  // 1. Sales History Ledger: Strictly initialized to an empty array [] (First live sale starts at #1)
-  const [orders, setOrders] = useState<Order[]>(() => {
-    try {
-      const isClean = safeGetItem('enreach_delivery_clean_v2');
-      if (!isClean) {
-        safeSetItem('enreach_delivery_clean_v2', 'true');
-        safeRemoveItem('backstage_orders');
-        safeRemoveItem('sales_history');
-        safeRemoveItem('invoices');
-        safeRemoveItem('backstage_cloud_orders');
-        safeRemoveItem('backstage_cart');
-        safeRemoveItem('backstage_number_history');
-        safeRemoveItem('backstage_client_logs');
-        return [];
-      }
-      const saved = safeGetItem('backstage_orders');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {}
-    return [];
-  });
-  // Sales History alias
+  // 1. Sales & Orders History: strictly default to empty arrays []
+  const [sales, setSales] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const salesHistory = orders;
   const setSalesHistory = setOrders;
 
-  // 2. Staff Performance History / Service Logs: Strictly initialized to an empty array []
+  // 2. Staff Performance History / Service Logs: strictly default to empty array []
   const [staffLogs, setStaffLogs] = useState<StaffServiceRecord[]>([]);
 
-  // 3. Number History / Client Phone Logs: Strictly initialized to an empty array []
+  // 3. Number History / Client Phone Logs: strictly default to empty array []
+  const [numberLogs, setNumberLogs] = useState<{ phone: string; visits: number }[]>([]);
   const [numberHistory, setNumberHistory] = useState<{ phone: string; visits: number }[]>([]);
 
   // 4. Initial Invoice / Order Counter: Hard reset strictly to 0 so the very first order creates Bill #1
@@ -529,18 +516,25 @@ export default function App() {
     // 2. Real-time Firebase listeners via custom events
     const handleFirebaseOrders = (e: CustomEvent<Order[]>) => {
       if (Array.isArray(e.detail) && e.detail.length > 0) {
-        setOrders(sortOrdersDescending(migrateOrdersToSequential(e.detail)));
+        const live = e.detail.filter(isLiveOrder);
+        if (live.length > 0) {
+          const sorted = sortOrdersDescending(migrateOrdersToSequential(live));
+          setOrders(sorted);
+          setSales(sorted);
+        }
       }
     };
 
     const handleFirebaseOrderAdded = (e: CustomEvent<Order>) => {
       const added = e.detail;
-      if (added && added.id) {
+      if (added && added.id && isLiveOrder(added)) {
         setOrders((prev) => {
           if (prev.some((o) => o.id === added.id)) {
             return prev;
           }
-          return sortOrdersDescending(migrateOrdersToSequential([added, ...prev]));
+          const sorted = sortOrdersDescending(migrateOrdersToSequential([added, ...prev]));
+          setSales(sorted);
+          return sorted;
         });
       }
     };
@@ -679,18 +673,38 @@ export default function App() {
     }
   }, [customCategories]);
 
-  // Initial startup execution: One-time permanent wipeout of old test history (app_reset_v2)
+  // Initial startup execution: Force clear browser LocalStorage history keys and ensure preview state is 100% empty (0 Invoices, 0 Revenue)
   useEffect(() => {
-    const wasWiped = runOneTimePermanentWipeoutSync();
-    if (wasWiped) {
-      setOrders([]);
-      setCartItems([]);
-      setStaffMembers(OFFICIAL_STAFF_MEMBERS);
-      setStaffLogs([]);
-      setNumberHistory([]);
-      setLastOrderId(0);
-      setCurrentInvoiceNumber(0);
-    }
+    forceClearHistoryLocalStorage();
+    runOneTimePermanentWipeoutSync();
+
+    setOrders([]);
+    setSales([]);
+    setCartItems([]);
+    setStaffMembers(INITIAL_STAFF_MEMBERS.map((s) => ({ ...s, totalSalesThisMonth: 0, history: [] })));
+    setStaffLogs([]);
+    setNumberLogs([]);
+    setNumberHistory([]);
+    setLastOrderId(0);
+    setCurrentInvoiceNumber(0);
+
+    // Execute ONE-TIME Supabase dummy data wipeout on launch
+    ensureSupabaseDummyPurgedOnce(true)
+      .then(({ purged }) => {
+        if (purged) {
+          setOrders([]);
+          setSales([]);
+          setCartItems([]);
+          setStaffLogs([]);
+          setNumberLogs([]);
+          setNumberHistory([]);
+          setLastOrderId(0);
+          setCurrentInvoiceNumber(0);
+        }
+      })
+      .catch((err) => {
+        console.warn('Initial Supabase purge error:', err);
+      });
   }, []);
 
   // Audio chime for luxury payment completion
@@ -809,7 +823,11 @@ export default function App() {
     }
 
     // a) Update the main "Sales History" list (sorted descending with newest invoice # at top)
-    setOrders((prev) => sortOrdersDescending([orderWithStaff, ...prev]));
+    setOrders((prev) => {
+      const updated = sortOrdersDescending([orderWithStaff, ...prev]);
+      setSales(updated);
+      return updated;
+    });
     setCartItems([]);
     playLuxuryChime();
     setActiveReceiptOrder(orderWithStaff);
@@ -1008,7 +1026,7 @@ export default function App() {
   };
 
   // Granular Delete Handlers for Edit Mode:
-  // 1. Delete individual sale record (Permanently wipes from state, localStorage & Firebase RTDB)
+  // 1. Delete individual sale record (Permanently wipes from state, localStorage & Firebase RTDB & Supabase)
   const handleDeleteOrder = (orderId: string) => {
     setOrders((prev) => {
       const updated = prev.filter((o) => o.id !== orderId);
@@ -1016,6 +1034,7 @@ export default function App() {
       if (typeof window !== 'undefined' && window.salonFirebase?.deleteOrder) {
         window.salonFirebase.deleteOrder(orderId);
       }
+      deleteOrderFromCloud(orderId).catch(() => {});
       if (updated.length === 0) {
         setLastOrderId(0);
         setCurrentInvoiceNumber(0);
@@ -1023,6 +1042,7 @@ export default function App() {
         safeRemoveItem('sales_history');
         safeRemoveItem('invoices');
         safeRemoveItem('backstage_cloud_orders');
+        resetCloudOrders().catch(() => {});
       }
       return updated;
     });
@@ -1066,6 +1086,8 @@ export default function App() {
       if (typeof window !== 'undefined' && window.salonFirebase?.deleteOrder) {
         deletedOrderIds.forEach((id) => window.salonFirebase?.deleteOrder?.(id));
       }
+      deleteClientOrdersFromCloud(phone).catch(() => {});
+      deletedOrderIds.forEach((id) => deleteOrderFromCloud(id).catch(() => {}));
       if (updated.length === 0) {
         setLastOrderId(0);
         setCurrentInvoiceNumber(0);
@@ -1073,6 +1095,7 @@ export default function App() {
         safeRemoveItem('sales_history');
         safeRemoveItem('invoices');
         safeRemoveItem('backstage_cloud_orders');
+        resetCloudOrders().catch(() => {});
       }
       return updated;
     });
@@ -1105,7 +1128,10 @@ export default function App() {
     const orderMatch = recordId.match(/^ord-rec-([^-]+)-/);
     const orderId = orderMatch ? orderMatch[1] : null;
 
+    deleteStaffServiceFromCloud(recordId).catch(() => {});
+
     if (orderId) {
+      deleteOrderFromCloud(orderId).catch(() => {});
       setOrders((prev) => {
         const updated = prev.filter((o) => o.id !== orderId);
         safeSetItem('backstage_orders', JSON.stringify(updated));
@@ -1119,6 +1145,7 @@ export default function App() {
           safeRemoveItem('sales_history');
           safeRemoveItem('invoices');
           safeRemoveItem('backstage_cloud_orders');
+          resetCloudOrders().catch(() => {});
         }
         return updated;
       });
@@ -1216,6 +1243,7 @@ export default function App() {
       window.salonFirebase.resetOrders().catch(() => {});
     }
     resetCloudOrders().catch(() => {});
+    purgeSupabaseDummyTables().catch(() => {});
     window.dispatchEvent(new CustomEvent('salon:firebase-orders-updated', { detail: [] }));
   };
 
@@ -1228,6 +1256,7 @@ export default function App() {
     if (typeof window !== 'undefined' && window.salonFirebase?.syncStaffMembers) {
       window.salonFirebase.syncStaffMembers(INITIAL_STAFF_MEMBERS).catch(() => {});
     }
+    purgeSupabaseDummyTables().catch(() => {});
     window.dispatchEvent(new CustomEvent('salon:firebase-staff-updated', { detail: INITIAL_STAFF_MEMBERS }));
   };
 
@@ -1248,22 +1277,27 @@ export default function App() {
       window.salonFirebase.resetOrders().catch(() => {});
     }
     resetCloudOrders().catch(() => {});
+    purgeSupabaseDummyTables().catch(() => {});
     window.dispatchEvent(new CustomEvent('salon:firebase-orders-updated', { detail: [] }));
   };
 
   // 3. SPECIFIC DATA WIPE (PURGE ONLY HISTORIES):
-  // Clears Sales History, Membership History, Number History, and Staff History.
-  // Order counter resets strictly back to #1, while keeping all 112+ services and salon settings 100% intact.
+  // Clears Sales History, Number History, and Staff History.
+  // Order counter resets strictly back to #1, while keeping all 112+ services, Members list, and salon settings 100% intact.
   const handleResetProductionData = async () => {
     // a. Execute specific history purge script
     await purgeOnlyHistories();
 
-    // b. Reset React state
+    // b. Reset React state (Memberships and Services 100% preserved)
     setOrders([]);
-    setMemberships([]);
-    setLoyaltyPasses([]);
+    setSales([]);
+    setStaffLogs([]);
+    setNumberLogs([]);
+    setNumberHistory([]);
     setCartItems([]);
-    setStaffMembers(INITIAL_STAFF_MEMBERS);
+    setStaffMembers(INITIAL_STAFF_MEMBERS.map((s) => ({ ...s, totalSalesThisMonth: 0, history: [] })));
+    setLastOrderId(0);
+    setCurrentInvoiceNumber(0);
     setActiveReceiptOrder(null);
   };
 

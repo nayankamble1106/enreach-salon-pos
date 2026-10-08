@@ -490,10 +490,19 @@
           categoriesRef.keepSynced(true);
         } catch (e) {}
 
+        function isLiveFirebaseOrder(o) {
+          if (!o || !o.id) return false;
+          var isMockId = ['#1', '#2', '#3', '#4', '#5', '#6', '#7'].indexOf(o.id) !== -1;
+          if (isMockId && (!o.date || o.date.indexOf('2024') !== -1 || o.date.indexOf('2025') !== -1 || o.date === '07/10/2026')) {
+            return false;
+          }
+          return true;
+        }
+
         // A. Real-time child_added on Orders: Triggers INSTANTLY when ANY device creates an order
         ordersRef.on('child_added', function(snapshot) {
           const newOrder = snapshot.val();
-          if (!newOrder || !newOrder.id) return;
+          if (!newOrder || !newOrder.id || !isLiveFirebaseOrder(newOrder)) return;
 
           let exists = false;
           for (let i = 0; i < window.__salonLastFirebaseOrders.length; i++) {
@@ -520,7 +529,7 @@
         // B. Real-time child_changed on Orders
         ordersRef.on('child_changed', function(snapshot) {
           const updatedOrder = snapshot.val();
-          if (!updatedOrder || !updatedOrder.id) return;
+          if (!updatedOrder || !updatedOrder.id || !isLiveFirebaseOrder(updatedOrder)) return;
 
           for (let i = 0; i < window.__salonLastFirebaseOrders.length; i++) {
             if (window.__salonLastFirebaseOrders[i].id === updatedOrder.id) {
@@ -537,7 +546,7 @@
           const list = [];
           if (val) {
             Object.keys(val).forEach(function(k) {
-              if (val[k]) list.push(val[k]);
+              if (val[k] && isLiveFirebaseOrder(val[k])) list.push(val[k]);
             });
           }
           window.__salonLastFirebaseOrders = list;
@@ -546,6 +555,10 @@
           if (list.length > 0) {
             try {
               localStorage.setItem('backstage_orders', JSON.stringify(list));
+            } catch (e) {}
+          } else {
+            try {
+              localStorage.setItem('backstage_orders', '[]');
             } catch (e) {}
           }
         }, function(err) {
@@ -641,19 +654,24 @@
             Object.keys(val).forEach(function(k) {
               if (val[k]) {
                 const s = val[k];
-                if (!Array.isArray(s.history)) {
-                  s.history = s.history ? Object.values(s.history) : [];
-                }
-                list.push(s);
+                var rawHist = Array.isArray(s.history) ? s.history : (s.history ? Object.values(s.history) : []);
+                var liveHist = rawHist.filter(function(h) {
+                  return h && h.id && !h.id.startsWith('mock-') && !h.id.startsWith('dummy-');
+                });
+                var liveSales = liveHist.reduce(function(sum, h) { return sum + (h.amount || 0); }, 0);
+                list.push({
+                  id: s.id,
+                  name: s.name,
+                  role: s.role,
+                  totalSalesThisMonth: liveSales,
+                  history: liveHist
+                });
               }
             });
           }
-          window.__salonLastFirebaseStaff = list;
-          window.dispatchEvent(new CustomEvent('salon:firebase-staff-updated', { detail: list }));
           if (list.length > 0) {
-            try {
-              localStorage.setItem('backstage_staff_performance', JSON.stringify(list));
-            } catch (e) {}
+            window.__salonLastFirebaseStaff = list;
+            window.dispatchEvent(new CustomEvent('salon:firebase-staff-updated', { detail: list }));
           }
         });
 

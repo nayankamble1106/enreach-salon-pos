@@ -122,22 +122,29 @@ export function getFutureIndianDate(daysToAdd: number): string {
   return formatIndianDate(future);
 }
 
+export const AVAILABLE_YEARS = [2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035, 2036];
+export const DEFAULT_SELECTED_YEAR = 2026;
+
 /**
  * Calculates start and end timestamps for the 4 standard timeframes:
  * 1. Today's Sales: Strictly from TODAY at 12:00 AM (00:00:00) to now/end of day
  * 2. Weekly Sales: From Monday at 12:00 AM of current week to now
  * 3. Monthly Sales: Strictly from 1st day of current month (00:00:00) to now
- * 4. Yearly Sales: Strictly from Jan 1st of current calendar year (00:00:00) to now
+ * 4. Yearly Sales: Strictly from Jan 1st of selected calendar year (2026-2036) to Dec 31st
  */
-export function getTimeframeBounds(timeframe: 'daily' | 'weekly' | 'monthly' | 'yearly', refDate = new Date()): { start: number; end: number } {
+export function getTimeframeBounds(
+  timeframe: 'daily' | 'weekly' | 'monthly' | 'yearly',
+  refDate = new Date(),
+  selectedYear?: number
+): { start: number; end: number } {
   const now = new Date(refDate);
-  const year = now.getFullYear();
+  const nowYear = now.getFullYear();
   const month = now.getMonth();
   const date = now.getDate();
 
   if (timeframe === 'daily') {
-    const startOfDay = new Date(year, month, date, 0, 0, 0, 0).getTime();
-    const endOfDay = new Date(year, month, date, 23, 59, 59, 999).getTime();
+    const startOfDay = new Date(nowYear, month, date, 0, 0, 0, 0).getTime();
+    const endOfDay = new Date(nowYear, month, date, 23, 59, 59, 999).getTime();
     return { start: startOfDay, end: Math.max(endOfDay, now.getTime()) };
   }
 
@@ -145,20 +152,21 @@ export function getTimeframeBounds(timeframe: 'daily' | 'weekly' | 'monthly' | '
     // Current week starting from Monday 00:00:00
     const dayOfWeek = now.getDay(); // 0 is Sunday, 1 is Monday...
     const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // distance to Monday
-    const monday = new Date(year, month, date - diffToMonday, 0, 0, 0, 0);
+    const monday = new Date(nowYear, month, date - diffToMonday, 0, 0, 0, 0);
     const endOfWeek = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
     return { start: monday.getTime(), end: Math.max(endOfWeek.getTime(), now.getTime()) };
   }
 
   if (timeframe === 'monthly') {
     // 1st of current month at 00:00:00 to end of month
-    const startOfMonth = new Date(year, month, 1, 0, 0, 0, 0).getTime();
-    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
+    const startOfMonth = new Date(nowYear, month, 1, 0, 0, 0, 0).getTime();
+    const endOfMonth = new Date(nowYear, month + 1, 0, 23, 59, 59, 999).getTime();
     return { start: startOfMonth, end: Math.max(endOfMonth, now.getTime()) };
   }
 
-  // Yearly: Jan 1st 00:00:00 of current calendar year to Dec 31st 23:59:59
-  const startOfYear = new Date(year, 0, 1, 0, 0, 0, 0).getTime();
-  const endOfYear = new Date(year, 11, 31, 23, 59, 59, 999).getTime();
-  return { start: startOfYear, end: Math.max(endOfYear, now.getTime()) };
+  // Yearly: Jan 1st 00:00:00 of selected calendar year to Dec 31st 23:59:59
+  const targetYear = selectedYear ?? nowYear;
+  const startOfYear = new Date(targetYear, 0, 1, 0, 0, 0, 0).getTime();
+  const endOfYear = new Date(targetYear, 11, 31, 23, 59, 59, 999).getTime();
+  return { start: startOfYear, end: endOfYear };
 }

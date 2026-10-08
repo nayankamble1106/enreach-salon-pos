@@ -83,3 +83,11 @@ BEGIN
     CREATE POLICY "Public Staff services read write" ON public.staff_services FOR ALL USING (true) WITH CHECK (true);
   END IF;
 END $$;
+
+-- ==============================================================================
+-- ONE-TIME DUMMY TEST ROWS PURGE (Optional manual command for Supabase SQL Editor):
+-- Clears test sales, number histories & staff services. Next order starts at #1.
+-- Memberships table and client loyalty are 100% PRESERVED.
+-- ==============================================================================
+-- TRUNCATE TABLE public.orders;
+-- TRUNCATE TABLE public.staff_services;

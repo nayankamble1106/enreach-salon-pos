@@ -30,6 +30,8 @@ import {
   formatIndianDate,
   formatIndianDateTime,
   getTimeframeBounds,
+  AVAILABLE_YEARS,
+  DEFAULT_SELECTED_YEAR,
 } from '../utils/dateUtils';
 import { SupabaseConfigModal } from './SupabaseConfigModal';
 import { resetCloudOrders, isSupabaseConfigured } from '../services/supabase';
@@ -62,6 +64,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
   isCloudSyncing = false,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
+  const [selectedYear, setSelectedYear] = useState<number>(DEFAULT_SELECTED_YEAR);
   const [searchTerm, setSearchTerm] = useState('');
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [isProductionResetModalOpen, setIsProductionResetModalOpen] = useState(false);
@@ -151,8 +154,6 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
             localStorage.removeItem('invoices');
             localStorage.removeItem('sales_history');
             localStorage.removeItem('backstage_cloud_orders');
-            localStorage.removeItem('backstage_memberships');
-            localStorage.removeItem('backstage_loyalty_passes');
             localStorage.removeItem('backstage_cart');
           }
         } catch {}
@@ -170,7 +171,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
 
   // Dynamically filter invoices by strict calendar-based timeframe
   const timeframeOrders = useMemo(() => {
-    const { start, end } = getTimeframeBounds(selectedTimeframe);
+    const { start, end } = getTimeframeBounds(selectedTimeframe, new Date(), selectedYear);
 
     const matched = orders.filter((order) => {
       const orderTs = parseDateToTimestamp(order.date);
@@ -178,7 +179,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
     });
 
     return sortOrdersDescending(matched);
-  }, [orders, selectedTimeframe]);
+  }, [orders, selectedTimeframe, selectedYear]);
 
   // Calculate dynamic financial metrics based on the selected timeframe
   const totalRevenue = useMemo(() => {
@@ -306,19 +307,18 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
     });
   }, [orders]);
 
-  // 4. Yearly Overview Breakdown (Quarters Q1-Q4 & Year Summary)
+  // 4. Yearly Overview Breakdown (Quarters Q1-Q4 & Year Summary for selectedYear 2026-2036)
   const yearlyBreakdown = useMemo(() => {
-    const currentYear = new Date().getFullYear();
     const quarters = [
-      { name: 'Q1 (Jan - Mar)', startMonth: 0, endMonth: 2 },
-      { name: 'Q2 (Apr - Jun)', startMonth: 3, endMonth: 5 },
-      { name: 'Q3 (Jul - Sep)', startMonth: 6, endMonth: 8 },
-      { name: 'Q4 (Oct - Dec)', startMonth: 9, endMonth: 11 },
+      { name: 'Q1 (Jan - Mar)', startMonth: 0, endMonth: 2, label: 'Q1' },
+      { name: 'Q2 (Apr - Jun)', startMonth: 3, endMonth: 5, label: 'Q2' },
+      { name: 'Q3 (Jul - Sep)', startMonth: 6, endMonth: 8, label: 'Q3' },
+      { name: 'Q4 (Oct - Dec)', startMonth: 9, endMonth: 11, label: 'Q4' },
     ];
 
     return quarters.map((q) => {
-      const qStart = new Date(currentYear, q.startMonth, 1, 0, 0, 0, 0).getTime();
-      const qEnd = new Date(currentYear, q.endMonth + 1, 0, 23, 59, 59, 999).getTime();
+      const qStart = new Date(selectedYear, q.startMonth, 1, 0, 0, 0, 0).getTime();
+      const qEnd = new Date(selectedYear, q.endMonth + 1, 0, 23, 59, 59, 999).getTime();
 
       const matchedBills = orders.filter((o) => {
         const ts = parseDateToTimestamp(o.date);
@@ -328,12 +328,34 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
       const revenue = matchedBills.reduce((sum, o) => sum + o.total, 0);
       return {
         name: q.name,
+        label: q.label,
         count: matchedBills.length,
         revenue,
         orders: sortOrdersDescending(matchedBills),
       };
     });
-  }, [orders]);
+  }, [orders, selectedYear]);
+
+  // Dynamic Annual Revenue for selectedYear (2026 - 2036)
+  const selectedYearRevenue = useMemo(() => {
+    const start = new Date(selectedYear, 0, 1, 0, 0, 0, 0).getTime();
+    const end = new Date(selectedYear, 11, 31, 23, 59, 59, 999).getTime();
+    return orders
+      .filter((o) => {
+        const ts = parseDateToTimestamp(o.date);
+        return ts >= start && ts <= end;
+      })
+      .reduce((sum, o) => sum + o.total, 0);
+  }, [orders, selectedYear]);
+
+  const selectedYearInvoicesCount = useMemo(() => {
+    const start = new Date(selectedYear, 0, 1, 0, 0, 0, 0).getTime();
+    const end = new Date(selectedYear, 11, 31, 23, 59, 59, 999).getTime();
+    return orders.filter((o) => {
+      const ts = parseDateToTimestamp(o.date);
+      return ts >= start && ts <= end;
+    }).length;
+  }, [orders, selectedYear]);
 
   // Filtered orders inside Drill-Down Modal
   const modalFilteredOrders = useMemo(() => {
@@ -361,7 +383,7 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
     { id: 'daily', label: "Today's Sales", sublabel: 'From 12:00 AM Today', icon: Clock },
     { id: 'weekly', label: 'Weekly Sales', sublabel: 'Current Week (Mon-Sun)', icon: Calendar },
     { id: 'monthly', label: 'Monthly Sales', sublabel: 'Current Month (1st-30/31st)', icon: BarChart3 },
-    { id: 'yearly', label: 'Yearly Sales', sublabel: `Calendar Year ${new Date().getFullYear()}`, icon: Sparkles },
+    { id: 'yearly', label: 'Yearly Sales', sublabel: `Calendar Year ${selectedYear}`, icon: Sparkles },
   ];
 
   return (
@@ -654,37 +676,110 @@ export const SalesHistoryTab: React.FC<SalesHistoryTabProps> = ({
             </div>
           )}
 
-          {/* 4. Yearly Sales Breakdown: Calendar Year & Quarters */}
+          {/* 4. 10-Yearly Sales Breakdown (2026 - 2036): Year Selector, Dynamic Annual Revenue Banner & Quarters */}
           {selectedTimeframe === 'yearly' && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Quarterly Breakdown (Click Any Quarter)</span>
-                </span>
-                <span className="text-[11px] text-slate-400">Annual Summary</span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {yearlyBreakdown.map((q) => (
-                  <div
-                    key={q.name}
-                    onClick={() =>
-                      setSelectedBreakdown({
-                        title: `${q.name} Sales Breakdown`,
-                        subtitle: `${q.count} invoices processed • Total Revenue: ${currencySymbol}${q.revenue.toLocaleString('en-IN')}`,
-                        orders: q.orders,
-                      })
-                    }
-                    className="p-3 bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 rounded-xl border border-slate-200 cursor-pointer transition-all active:scale-98 hover:shadow-xs group"
-                    title={`Click to inspect all bills for ${q.name}`}
-                  >
-                    <span className="text-xs font-bold text-slate-900 group-hover:text-amber-950 block">{q.name}</span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">{q.count} invoices processed</span>
-                    <div className="mt-2 pt-2 border-t border-slate-200 text-sm font-extrabold text-slate-900 group-hover:text-amber-900">
-                      {currencySymbol}{q.revenue.toLocaleString('en-IN')}
-                    </div>
+            <div className="space-y-4">
+              {/* Year Selector Dropdown Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-slate-50 border border-slate-200/90 rounded-2xl">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 flex items-center justify-center shrink-0">
+                    <Sparkles className="w-4 h-4 text-amber-800" />
                   </div>
-                ))}
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
+                      10-Yearly Sales Breakdown (2026 – 2036)
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">
+                      Select calendar year to calculate annual & quarterly metrics
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <label htmlFor="sales-year-select" className="text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0">
+                    <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Select Year:</span>
+                  </label>
+                  <select
+                    id="sales-year-select"
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(Number(e.target.value))}
+                    className="bg-white border-2 border-amber-300 hover:border-amber-500 focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 text-slate-900 font-extrabold text-xs sm:text-sm rounded-xl px-3.5 py-1.5 shadow-2xs outline-none transition-all cursor-pointer"
+                  >
+                    {AVAILABLE_YEARS.map((yr) => (
+                      <option key={yr} value={yr}>
+                        Year {yr}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Dynamic Annual Revenue Banner */}
+              <div className="bg-gradient-to-r from-amber-950 via-amber-900 to-amber-950 text-white rounded-2xl p-4 sm:p-5 shadow-sm border border-amber-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/25 text-amber-200 border border-amber-400/30 text-[11px] font-bold tracking-wide uppercase">
+                    <Calendar className="w-3 h-3 text-amber-300" />
+                    <span>Annual Revenue Summary</span>
+                  </div>
+                  <h4 className="text-lg sm:text-2xl font-black text-amber-50 tracking-tight">
+                    {selectedYear} Total Revenue:{' '}
+                    <span className="text-amber-300 font-black">
+                      {currencySymbol}{selectedYearRevenue.toLocaleString('en-IN')}
+                    </span>
+                  </h4>
+                  <p className="text-xs text-amber-200/80">
+                    Cumulative gross revenue generated across all 4 quarters for calendar year {selectedYear}.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="bg-black/30 backdrop-blur-xs border border-amber-400/30 rounded-xl px-4 py-2.5 text-right">
+                    <span className="text-[10px] uppercase tracking-wider text-amber-200/80 block font-bold">
+                      Yearly Invoices
+                    </span>
+                    <span className="text-base sm:text-xl font-black text-white">
+                      {selectedYearInvoicesCount} {selectedYearInvoicesCount === 1 ? 'Bill' : 'Bills'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quarterly Breakdown Cards Below Banner */}
+              <div>
+                <div className="flex items-center justify-between mb-2 px-0.5">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>Quarterly Breakdown for {selectedYear}</span>
+                  </span>
+                  <span className="text-[11px] text-slate-500 font-medium">Click Any Quarter to Inspect Bills</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {yearlyBreakdown.map((q) => (
+                    <div
+                      key={q.name}
+                      onClick={() =>
+                        setSelectedBreakdown({
+                          title: `${q.name} (${selectedYear}) Sales Breakdown`,
+                          subtitle: `${q.count} invoices processed • Total Revenue: ${currencySymbol}${q.revenue.toLocaleString('en-IN')}`,
+                          orders: q.orders,
+                        })
+                      }
+                      className="p-3 bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 rounded-xl border border-slate-200 cursor-pointer transition-all active:scale-98 hover:shadow-xs group"
+                      title={`Click to inspect all bills for ${q.name} ${selectedYear}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-900 group-hover:text-amber-950 block">{q.name}</span>
+                        <span className="text-[10px] font-extrabold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md border border-amber-200/60">
+                          {selectedYear}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">{q.count} invoices processed</span>
+                      <div className="mt-2 pt-2 border-t border-slate-200 text-sm font-extrabold text-slate-900 group-hover:text-amber-900">
+                        {currencySymbol}{q.revenue.toLocaleString('en-IN')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

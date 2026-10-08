@@ -15,7 +15,13 @@ import {
   Trash2,
   CheckCircle2,
 } from 'lucide-react';
-import { parseDateToTimestamp, formatIndianDate, getTimeframeBounds } from '../utils/dateUtils';
+import {
+  parseDateToTimestamp,
+  formatIndianDate,
+  getTimeframeBounds,
+  AVAILABLE_YEARS,
+  DEFAULT_SELECTED_YEAR,
+} from '../utils/dateUtils';
 import { cleanNumberInput } from '../utils/numberUtils';
 import { SalesTimeframe } from './SalesHistoryTab';
 
@@ -58,6 +64,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
   onPurgeStaffLogs,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<SalesTimeframe>('monthly');
+  const [selectedYear, setSelectedYear] = useState<number>(DEFAULT_SELECTED_YEAR);
   const [selectedStaffModal, setSelectedStaffModal] = useState<StaffMember | null>(null);
   const [purgeToastMessage, setPurgeToastMessage] = useState<string | null>(null);
 
@@ -161,7 +168,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
     { id: 'daily', label: "Today's Sales", sublabel: 'From 12:00 AM Today', icon: Clock },
     { id: 'weekly', label: 'Weekly Sales', sublabel: 'Current Week (Mon-Sun)', icon: Calendar },
     { id: 'monthly', label: 'Monthly Sales', sublabel: 'Current Month (1st-30/31st)', icon: BarChart3 },
-    { id: 'yearly', label: 'Yearly Sales', sublabel: `Calendar Year ${new Date().getFullYear()}`, icon: Sparkles },
+    { id: 'yearly', label: 'Yearly Sales', sublabel: `Calendar Year ${selectedYear}`, icon: Sparkles },
   ];
 
   // 1. Today's Time-Slot Breakdown (9am-12pm, 12pm-4pm, 4pm-8pm, 8pm-12am)
@@ -275,9 +282,8 @@ export const StaffTab: React.FC<StaffTabProps> = ({
     });
   }, [orders]);
 
-  // 4. Yearly Overview Breakdown (Quarters Q1-Q4)
+  // 4. Yearly Overview Breakdown (Quarters Q1-Q4 for selectedYear 2026-2036)
   const yearlyBreakdown = useMemo(() => {
-    const currentYear = new Date().getFullYear();
     const quarters = [
       { name: 'Q1 (Jan - Mar)', startMonth: 0, endMonth: 2 },
       { name: 'Q2 (Apr - Jun)', startMonth: 3, endMonth: 5 },
@@ -286,8 +292,8 @@ export const StaffTab: React.FC<StaffTabProps> = ({
     ];
 
     return quarters.map((q) => {
-      const qStart = new Date(currentYear, q.startMonth, 1, 0, 0, 0, 0).getTime();
-      const qEnd = new Date(currentYear, q.endMonth + 1, 0, 23, 59, 59, 999).getTime();
+      const qStart = new Date(selectedYear, q.startMonth, 1, 0, 0, 0, 0).getTime();
+      const qEnd = new Date(selectedYear, q.endMonth + 1, 0, 23, 59, 59, 999).getTime();
 
       const matchedBills = orders.filter((o) => {
         const ts = parseDateToTimestamp(o.date);
@@ -303,7 +309,28 @@ export const StaffTab: React.FC<StaffTabProps> = ({
         revenue,
       };
     });
-  }, [orders]);
+  }, [orders, selectedYear]);
+
+  // Dynamic Annual Revenue for selectedYear (2026 - 2036)
+  const selectedYearRevenue = useMemo(() => {
+    const start = new Date(selectedYear, 0, 1, 0, 0, 0, 0).getTime();
+    const end = new Date(selectedYear, 11, 31, 23, 59, 59, 999).getTime();
+    return orders
+      .filter((o) => {
+        const ts = parseDateToTimestamp(o.date);
+        return ts >= start && ts <= end;
+      })
+      .reduce((sum, o) => sum + o.total, 0);
+  }, [orders, selectedYear]);
+
+  const selectedYearInvoicesCount = useMemo(() => {
+    const start = new Date(selectedYear, 0, 1, 0, 0, 0, 0).getTime();
+    const end = new Date(selectedYear, 11, 31, 23, 59, 59, 999).getTime();
+    return orders.filter((o) => {
+      const ts = parseDateToTimestamp(o.date);
+      return ts >= start && ts <= end;
+    }).length;
+  }, [orders, selectedYear]);
 
   // Active calculation bounds (dynamically reflects selected sub-period or parent timeframe)
   const activeBounds = useMemo(() => {
@@ -315,12 +342,12 @@ export const StaffTab: React.FC<StaffTabProps> = ({
         isCustomSubPeriod: true,
       };
     }
-    const bounds = getTimeframeBounds(selectedTimeframe);
+    const bounds = getTimeframeBounds(selectedTimeframe, new Date(), selectedYear);
     const labelMap: Record<SalesTimeframe, string> = {
       daily: "Today's Sales",
       weekly: 'Current Week',
       monthly: 'Current Month',
-      yearly: `Calendar Year ${new Date().getFullYear()}`,
+      yearly: `Calendar Year ${selectedYear}`,
     };
     return {
       start: bounds.start,
@@ -328,7 +355,7 @@ export const StaffTab: React.FC<StaffTabProps> = ({
       label: labelMap[selectedTimeframe],
       isCustomSubPeriod: false,
     };
-  }, [selectedTimeframe, selectedSubPeriod]);
+  }, [selectedTimeframe, selectedSubPeriod, selectedYear]);
 
   // Calculate staff performance metrics dynamically based on the active chosen period
   const staffPerformanceData = useMemo(() => {
@@ -732,52 +759,130 @@ export const StaffTab: React.FC<StaffTabProps> = ({
             </div>
           )}
 
-          {/* 4. Yearly Sales Breakdown: Calendar Year & Quarters */}
+          {/* 4. 10-Yearly Sales Breakdown (2026 - 2036): Year Selector, Dynamic Annual Revenue Banner & Quarters */}
           {selectedTimeframe === 'yearly' && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Quarterly Breakdown (Click Any Quarter to Calculate Staff Performance)</span>
-                </span>
-                <span className="text-[11px] text-slate-400">Annual Summary</span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {yearlyBreakdown.map((q) => {
-                  const isSelected = selectedSubPeriod?.id === q.name && selectedSubPeriod?.timeframe === 'yearly';
-                  return (
-                    <div
-                      key={q.name}
-                      onClick={() =>
-                        setSelectedSubPeriod(
-                          isSelected
-                            ? null
-                            : {
-                                timeframe: 'yearly',
-                                id: q.name,
-                                label: q.name,
-                                start: q.start,
-                                end: q.end,
-                              }
-                        )
+            <div className="space-y-4">
+              {/* Year Selector Dropdown Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-slate-50 border border-slate-200/90 rounded-2xl">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 flex items-center justify-center shrink-0">
+                    <Sparkles className="w-4 h-4 text-amber-800" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
+                      10-Yearly Staff Breakdown (2026 – 2036)
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">
+                      Select calendar year to calculate annual revenue & quarterly staff performance
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <label htmlFor="staff-year-select" className="text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0">
+                    <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Select Year:</span>
+                  </label>
+                  <select
+                    id="staff-year-select"
+                    value={selectedYear}
+                    onChange={(e) => {
+                      setSelectedYear(Number(e.target.value));
+                      if (selectedSubPeriod?.timeframe === 'yearly') {
+                        setSelectedSubPeriod(null);
                       }
-                      className={`p-3 rounded-xl border cursor-pointer transition-all active:scale-98 hover:shadow-xs group ${
-                        isSelected
-                          ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-500 shadow-xs'
-                          : 'bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 border-slate-200'
-                      }`}
-                      title={`Click to calculate staff performance for ${q.name}`}
-                    >
-                      <span className={`text-xs font-bold block ${isSelected ? 'text-amber-950' : 'text-slate-900 group-hover:text-amber-950'}`}>
-                        {q.name}
-                      </span>
-                      <span className="text-[10px] text-slate-400 block mt-0.5">{q.count} invoices processed</span>
-                      <div className={`mt-2 pt-2 border-t border-slate-200 text-sm font-extrabold ${isSelected ? 'text-amber-950' : 'text-slate-900 group-hover:text-amber-900'}`}>
-                        {currencySymbol}{q.revenue.toLocaleString('en-IN')}
+                    }}
+                    className="bg-white border-2 border-amber-300 hover:border-amber-500 focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 text-slate-900 font-extrabold text-xs sm:text-sm rounded-xl px-3.5 py-1.5 shadow-2xs outline-none transition-all cursor-pointer"
+                  >
+                    {AVAILABLE_YEARS.map((yr) => (
+                      <option key={yr} value={yr}>
+                        Year {yr}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Dynamic Annual Revenue Banner */}
+              <div className="bg-gradient-to-r from-amber-950 via-amber-900 to-amber-950 text-white rounded-2xl p-4 sm:p-5 shadow-sm border border-amber-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/25 text-amber-200 border border-amber-400/30 text-[11px] font-bold tracking-wide uppercase">
+                    <Calendar className="w-3 h-3 text-amber-300" />
+                    <span>Staff Annual Revenue Performance</span>
+                  </div>
+                  <h4 className="text-lg sm:text-2xl font-black text-amber-50 tracking-tight">
+                    {selectedYear} Total Revenue:{' '}
+                    <span className="text-amber-300 font-black">
+                      {currencySymbol}{selectedYearRevenue.toLocaleString('en-IN')}
+                    </span>
+                  </h4>
+                  <p className="text-xs text-amber-200/80">
+                    Cumulative salon sales attributed across all team specialists for calendar year {selectedYear}.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="bg-black/30 backdrop-blur-xs border border-amber-400/30 rounded-xl px-4 py-2.5 text-right">
+                    <span className="text-[10px] uppercase tracking-wider text-amber-200/80 block font-bold">
+                      Yearly Invoices
+                    </span>
+                    <span className="text-base sm:text-xl font-black text-white">
+                      {selectedYearInvoicesCount} {selectedYearInvoicesCount === 1 ? 'Bill' : 'Bills'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quarterly Breakdown Cards Below Banner */}
+              <div>
+                <div className="flex items-center justify-between mb-2 px-0.5">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>Quarterly Breakdown for {selectedYear}</span>
+                  </span>
+                  <span className="text-[11px] text-slate-500 font-medium">Click Any Quarter to Calculate Staff Performance</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {yearlyBreakdown.map((q) => {
+                    const isSelected = selectedSubPeriod?.id === q.name && selectedSubPeriod?.timeframe === 'yearly';
+                    return (
+                      <div
+                        key={q.name}
+                        onClick={() =>
+                          setSelectedSubPeriod(
+                            isSelected
+                              ? null
+                              : {
+                                  timeframe: 'yearly',
+                                  id: q.name,
+                                  label: `${q.name} (${selectedYear})`,
+                                  start: q.start,
+                                  end: q.end,
+                                }
+                          )
+                        }
+                        className={`p-3 rounded-xl border cursor-pointer transition-all active:scale-98 hover:shadow-xs group ${
+                          isSelected
+                            ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-500 shadow-xs'
+                            : 'bg-slate-50 hover:bg-amber-50/70 hover:border-amber-400 border-slate-200'
+                        }`}
+                        title={`Click to calculate staff performance for ${q.name} ${selectedYear}`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs font-bold block ${isSelected ? 'text-amber-950 font-black' : 'text-slate-900 group-hover:text-amber-950'}`}>
+                            {q.name}
+                          </span>
+                          <span className="text-[10px] font-extrabold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md border border-amber-200/60">
+                            {selectedYear}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">{q.count} invoices processed</span>
+                        <div className={`mt-2 pt-2 border-t border-slate-200 text-sm font-extrabold ${isSelected ? 'text-amber-950' : 'text-slate-900 group-hover:text-amber-900'}`}>
+                          {currencySymbol}{q.revenue.toLocaleString('en-IN')}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
