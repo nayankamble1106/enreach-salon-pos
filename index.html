@@ -491,12 +491,7 @@
         } catch (e) {}
 
         function isLiveFirebaseOrder(o) {
-          if (!o || !o.id) return false;
-          var isMockId = ['#1', '#2', '#3', '#4', '#5', '#6', '#7'].indexOf(o.id) !== -1;
-          if (isMockId && (!o.date || o.date.indexOf('2024') !== -1 || o.date.indexOf('2025') !== -1 || o.date === '07/10/2026')) {
-            return false;
-          }
-          return true;
+          return Boolean(o && o.id);
         }
 
         // A. Real-time child_added on Orders: Triggers INSTANTLY when ANY device creates an order

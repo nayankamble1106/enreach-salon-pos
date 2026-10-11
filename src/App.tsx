@@ -22,7 +22,7 @@ import {
   syncStaffServiceToCloud,
   resetCloudOrders,
   isSupabaseConfigured,
-  ensureSupabaseDummyPurgedOnce,
+  subscribeToOrdersRealtime,
   purgeSupabaseDummyTables,
   deleteOrderFromCloud,
   deleteClientOrdersFromCloud,
@@ -336,9 +336,6 @@ export default function App() {
 
       // 2. Fetch from cloud storage mirror ONLY if Supabase is configured
       if (isSupabaseConfigured()) {
-        // Enforce ONE-TIME dummy records purge before reading cloud data so remote dummy rows cannot re-populate
-        await ensureSupabaseDummyPurgedOnce();
-
         const [salesRes, memberRes] = await Promise.all([
           fetchSalesFromCloud(),
           fetchMembershipsFromCloud(),
@@ -356,6 +353,7 @@ export default function App() {
               });
               const sorted = sortOrdersDescending(migrateOrdersToSequential(merged));
               setSales(sorted);
+              safeSetItem('backstage_orders', JSON.stringify(sorted));
               return sorted;
             });
           }
@@ -690,6 +688,30 @@ export default function App() {
   // Initial startup execution: Load cloud data and sync real-time records across devices without wiping orders
   useEffect(() => {
     loadCloudData();
+
+    // Subscribe to live Supabase updates
+    const unsubscribeSupabase = subscribeToOrdersRealtime(() => {
+      loadCloudData();
+    });
+
+    // Automatically re-fetch whenever the store owner unlocks the phone or focuses the browser tab
+    const handleFocus = () => {
+      loadCloudData();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        loadCloudData();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      unsubscribeSupabase();
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
   // Audio chime for luxury payment completion
@@ -1027,7 +1049,6 @@ export default function App() {
         safeRemoveItem('sales_history');
         safeRemoveItem('invoices');
         safeRemoveItem('backstage_cloud_orders');
-        resetCloudOrders().catch(() => {});
       }
       return updated;
     });
@@ -1080,7 +1101,6 @@ export default function App() {
         safeRemoveItem('sales_history');
         safeRemoveItem('invoices');
         safeRemoveItem('backstage_cloud_orders');
-        resetCloudOrders().catch(() => {});
       }
       return updated;
     });
@@ -1130,7 +1150,6 @@ export default function App() {
           safeRemoveItem('sales_history');
           safeRemoveItem('invoices');
           safeRemoveItem('backstage_cloud_orders');
-          resetCloudOrders().catch(() => {});
         }
         return updated;
       });

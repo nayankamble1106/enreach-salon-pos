@@ -28,15 +28,10 @@ export const INITIAL_STAFF_MEMBERS_DEFAULT = [
 ];
 
 /**
- * Filter helper: determines if a record is genuine live data vs initial dummy fallback test batch
+ * Filter helper: determines if a record is genuine live data
  */
 export function isLiveOrder(order: Order): boolean {
-  if (!order || !order.id) return false;
-  // If the record was part of the initial hardcoded test set with 7 bills totaling 7700 or dummy dates
-  const isMockBatch = ['#1', '#2', '#3', '#4', '#5', '#6', '#7'].includes(order.id) &&
-    (order.date?.includes('2024') || order.date?.includes('2025') || !order.date || order.date === '07/10/2026');
-  if (isMockBatch) return false;
-  return true;
+  return Boolean(order && order.id);
 }
 
 /**
@@ -253,22 +248,38 @@ export async function syncOrderToCloud(
   }
 
   try {
-    const seq = parseOrderSequence(normalizedOrder.id);
+    const rawItems = normalizedOrder.items || [];
+    const itemsWithMeta = rawItems.map((item, index) => {
+      if (index === 0) {
+        return {
+          ...item,
+          _orderMeta: {
+            subtotal: Number(normalizedOrder.subtotal || normalizedOrder.total || 0),
+            tax: Number(normalizedOrder.tax || 0),
+            discountPercentage: Number(normalizedOrder.discountPercentage || 0),
+            isMember: Boolean(resolvedIsMember),
+            notes: normalizedOrder.notes || '',
+            isLoyaltyPassApplied: Boolean(normalizedOrder.isLoyaltyPassApplied),
+            loyaltyPassId: normalizedOrder.loyaltyPassId || '',
+            date: normalizedOrder.date || new Date().toISOString(),
+            staffName: normalizedOrder.staffName || 'Kunal',
+          },
+        };
+      }
+      return item;
+    });
+
     const payload = {
-      id: normalizedOrder.id,
-      order_number: seq,
-      client_name: resolvedClientName,
-      client_phone: resolvedClientPhone,
-      is_member: resolvedIsMember,
-      discount_percentage: Number(normalizedOrder.discountPercentage || 0),
-      subtotal: Number(normalizedOrder.subtotal || 0),
-      tax: Number(normalizedOrder.tax || 0),
-      total: Number(normalizedOrder.total || 0),
-      payment_method: normalizedOrder.paymentMethod,
-      staff_name: normalizedOrder.staffName || 'Kunal',
-      items: normalizedOrder.items,
-      date: normalizedOrder.date,
-      created_at: new Date().toISOString(),
+      id: String(normalizedOrder.id),
+      customer_name: resolvedClientName,
+      customer_phone: resolvedClientPhone,
+      total_amount: Number(normalizedOrder.total || 0),
+      payment_method: String(normalizedOrder.paymentMethod || 'cash'),
+      status: 'completed',
+      items: itemsWithMeta,
+      created_at: normalizedOrder.date && !isNaN(Date.parse(normalizedOrder.date))
+        ? new Date(normalizedOrder.date).toISOString()
+        : new Date().toISOString(),
     };
 
     const { error } = await client.from('orders').upsert(payload, { onConflict: 'id' });
@@ -292,7 +303,6 @@ export async function fetchSalesFromCloud(): Promise<{ fromCloud: boolean; order
   const client = getSupabaseClient();
 
   if (!client) {
-    // Return volatile RAM store (strictly [] when no new live records exist)
     const liveLocal = inMemoryOrdersStore.filter(isLiveOrder);
     return {
       fromCloud: false,
@@ -319,46 +329,94 @@ export async function fetchSalesFromCloud(): Promise<{ fromCloud: boolean; order
     if (data && Array.isArray(data)) {
       interface SupabaseOrderRow {
         id: string;
+        customer_name?: string;
         client_name?: string;
         clientName?: string;
+        customer_phone?: string;
         client_phone?: string;
         clientPhone?: string;
-        is_member?: boolean;
-        isMember?: boolean;
-        discount_percentage?: number | string;
-        discountPercentage?: number | string;
+        total_amount?: number | string;
+        total?: number | string;
         subtotal?: number | string;
         tax?: number | string;
-        total?: number | string;
-        payment_method?: 'cash' | 'card' | 'upi';
-        paymentMethod?: 'cash' | 'card' | 'upi';
+        discount_percentage?: number | string;
+        discountPercentage?: number | string;
+        is_member?: boolean;
+        isMember?: boolean;
+        payment_method?: string;
+        paymentMethod?: string;
         staff_name?: string;
         staffName?: string;
         items?: unknown;
         date?: string;
+        created_at?: string;
+        status?: string;
       }
 
       const mappedOrders: Order[] = data.map((row: SupabaseOrderRow) => {
         const rawItems = row.items;
-        const items = Array.isArray(rawItems) ? rawItems : [];
+        const rawArray = Array.isArray(rawItems) ? rawItems : [];
+
+        const firstItem = rawArray[0] as { _orderMeta?: Record<string, unknown> } | undefined;
+        const meta = firstItem?._orderMeta;
+
+        const items = rawArray.map((it: any) => {
+          if (!it || typeof it !== 'object') return it;
+          const service = it.service || {
+            id: it.serviceId || 'srv-gen',
+            name: it.name || 'Salon Service',
+            price: Number(it.price || 0),
+            category: it.category || 'General',
+          };
+          return {
+            service,
+            quantity: Number(it.quantity || 1),
+            stylistId: String(it.stylistId || 'staff-1'),
+            stylistName: String(it.stylistName || it.staff || 'Kunal'),
+          };
+        });
+
+        const total = Number(row.total_amount ?? row.total ?? 0);
+        const subtotal = Number(meta?.subtotal ?? row.subtotal ?? total);
+        const tax = Number(meta?.tax ?? row.tax ?? 0);
+        const discountPercentage = Number(meta?.discountPercentage ?? row.discount_percentage ?? row.discountPercentage ?? 0);
+        const isMember = meta?.isMember !== undefined
+          ? Boolean(meta.isMember)
+          : Boolean(row.is_member ?? row.isMember);
+        const notes = typeof meta?.notes === 'string' ? meta.notes : undefined;
+        const isLoyaltyPassApplied = typeof meta?.isLoyaltyPassApplied === 'boolean' ? meta.isLoyaltyPassApplied : undefined;
+        const loyaltyPassId = typeof meta?.loyaltyPassId === 'string' ? meta.loyaltyPassId : undefined;
+
+        let date = typeof meta?.date === 'string' ? meta.date : row.date;
+        if (!date && row.created_at) {
+          date = row.created_at;
+        }
+
+        let staffName = typeof meta?.staffName === 'string' ? meta.staffName : (row.staff_name ?? row.staffName);
+        if (!staffName) {
+          const stylistNames = items.map((i: any) => i.stylistName).filter(Boolean);
+          staffName = stylistNames.length > 0 ? Array.from(new Set(stylistNames)).join(', ') : 'Kunal';
+        }
 
         return {
           id: String(row.id || '#1'),
-          clientName: row.client_name ?? row.clientName ?? 'Walk-in Client',
-          clientPhone: row.client_phone ?? row.clientPhone ?? '',
-          isMember: Boolean(row.is_member ?? row.isMember),
-          discountPercentage: Number(row.discount_percentage ?? row.discountPercentage ?? 0),
-          subtotal: Number(row.subtotal ?? row.total ?? 0),
-          tax: Number(row.tax ?? 0),
-          total: Number(row.total ?? 0),
-          paymentMethod: row.payment_method ?? row.paymentMethod ?? 'cash',
-          staffName: row.staff_name ?? row.staffName ?? 'Kunal',
+          clientName: row.customer_name ?? row.client_name ?? row.clientName ?? 'Walk-in Client',
+          clientPhone: row.customer_phone ?? row.client_phone ?? row.clientPhone ?? '',
+          isMember,
+          discountPercentage,
+          subtotal,
+          tax,
+          total,
+          paymentMethod: (row.payment_method ?? row.paymentMethod ?? 'cash') as any,
+          staffName,
           items,
-          date: row.date || new Date().toISOString(),
+          date: date || new Date().toISOString(),
+          notes,
+          isLoyaltyPassApplied,
+          loyaltyPassId,
         };
       });
 
-      // Filter out any initial dummy/test batch: returns strictly [] when no new live records exist
       const liveOrders = mappedOrders.filter(isLiveOrder);
       inMemoryOrdersStore = sortOrdersDescending(liveOrders);
 
@@ -377,6 +435,37 @@ export async function fetchSalesFromCloud(): Promise<{ fromCloud: boolean; order
       orders: inMemoryOrdersStore.filter(isLiveOrder),
       error: msg,
     };
+  }
+}
+
+/**
+ * 2B. Real-time Subscription for Supabase Orders table
+ * Instantly notifies when any device inserts, updates, or deletes an order.
+ */
+export function subscribeToOrdersRealtime(onUpdate: () => void): () => void {
+  const client = getSupabaseClient();
+  if (!client) return () => {};
+
+  try {
+    const channel = client
+      .channel('realtime_public_orders_sub')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        () => {
+          onUpdate();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      try {
+        client.removeChannel(channel);
+      } catch {}
+    };
+  } catch (err) {
+    console.warn('Supabase realtime orders subscription notice:', err);
+    return () => {};
   }
 }
 
@@ -595,18 +684,19 @@ export async function fetchStaffServicesFromCloud(): Promise<{
 export const SUPABASE_ONE_TIME_PURGE_KEY = 'supabase_dummy_purged_v1';
 
 /**
- * 7. Reset orders and staff services in Supabase (e.g. when resetting ledger or full history purge)
+ * 7. Reset orders and staff services in Supabase (Protected against automatic startup wipes)
  */
-export async function resetCloudOrders(): Promise<{ success: boolean }> {
+export async function resetCloudOrders(force = false): Promise<{ success: boolean }> {
+  if (!force) {
+    return { success: true };
+  }
   inMemoryOrdersStore = [];
   inMemoryStaffServicesStore = [];
   const client = getSupabaseClient();
   if (!client) return { success: true };
 
   try {
-    // Delete all orders
     await client.from('orders').delete().neq('id', '__dummy_impossible_key__');
-    // Delete all staff services
     await client.from('staff_services').delete().neq('id', '__dummy_impossible_key__');
     return { success: true };
   } catch (err) {
@@ -779,39 +869,11 @@ export async function purgeSupabaseDummyTables(): Promise<{ success: boolean; me
 
 /**
  * 12. ENSURE ONE-TIME SUPABASE DUMMY PURGE RUNS STRICTLY ONCE
- *
- * Ensures existing test rows are wiped from Supabase ONCE.
- * Once executed, `supabase_dummy_purged_v1` is set to 'true' in localStorage so
- * all future live transactions created by the salon from now on are PERMANENTLY
- * saved and synced without ever being wiped again!
+ * (Disabled to protect live orders from being wiped on startup across devices)
  */
-export async function ensureSupabaseDummyPurgedOnce(force = false): Promise<{ purged: boolean; message: string }> {
-  if (typeof window === 'undefined') {
-    return { purged: false, message: 'Window object unavailable' };
-  }
-
-  try {
-    const alreadyPurged = localStorage.getItem(SUPABASE_ONE_TIME_PURGE_KEY) === 'true';
-    if (alreadyPurged && !force) {
-      return { purged: false, message: 'Supabase dummy data already purged once. Cloud sync is active for live records.' };
-    }
-
-    // Execute purge
-    const res = await purgeSupabaseDummyTables();
-
-    // Mark one-time completion flag so future transactions persist permanently!
-    localStorage.setItem(SUPABASE_ONE_TIME_PURGE_KEY, 'true');
-
-    return {
-      purged: true,
-      message: res.message,
-    };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // Still set flag to avoid blocking live transactions
-    try {
-      localStorage.setItem(SUPABASE_ONE_TIME_PURGE_KEY, 'true');
-    } catch {}
-    return { purged: false, message: msg };
-  }
+export async function ensureSupabaseDummyPurgedOnce(): Promise<{ purged: boolean; message: string }> {
+  return {
+    purged: false,
+    message: 'Startup purge disabled. Live cloud records persist permanently across all devices.',
+  };
 }
