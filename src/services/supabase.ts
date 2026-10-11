@@ -877,3 +877,57 @@ export async function ensureSupabaseDummyPurgedOnce(): Promise<{ purged: boolean
     message: 'Startup purge disabled. Live cloud records persist permanently across all devices.',
   };
 }
+
+/**
+ * 13. Lookup Customer Name by Phone Number from Supabase public.orders table
+ * Searches for recent orders matching the entered customer phone digits.
+ */
+export async function lookupCustomerNameByPhone(phone: string): Promise<string | null> {
+  const digits = phone.replace(/\D/g, '');
+  if (!digits || digits.length < 5) return null;
+
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const searchPattern = digits.length > 10 ? digits.slice(-10) : digits;
+
+    const { data, error } = await client
+      .from('orders')
+      .select('customer_name, customer_phone')
+      .ilike('customer_phone', `%${searchPattern}%`)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (error || !data || data.length === 0) return null;
+
+    for (const row of data) {
+      const name = (row.customer_name || '').trim();
+      const rowDigits = (row.customer_phone || '').replace(/\D/g, '');
+      const isMatch =
+        rowDigits === digits ||
+        rowDigits.endsWith(digits) ||
+        digits.endsWith(rowDigits) ||
+        (rowDigits.length >= 10 && digits.length >= 10 && rowDigits.slice(-10) === digits.slice(-10));
+
+      if (
+        isMatch &&
+        name &&
+        name.toLowerCase() !== 'walk-in client' &&
+        name.toLowerCase() !== 'n/a'
+      ) {
+        return name;
+      }
+    }
+
+    for (const row of data) {
+      const name = (row.customer_name || '').trim();
+      if (name && name.toLowerCase() !== 'walk-in client' && name.toLowerCase() !== 'n/a') {
+        return name;
+      }
+    }
+  } catch (err) {
+    console.warn('lookupCustomerNameByPhone exception:', err);
+  }
+  return null;
+}

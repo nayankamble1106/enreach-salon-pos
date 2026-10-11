@@ -27,6 +27,7 @@ import { getNextOrderNumber } from '../utils/orderUtils';
 import { formatIndianDate, formatIndianDateTime, parseDateToTimestamp } from '../utils/dateUtils';
 import { cleanNumberInput, parseSafeNumber } from '../utils/numberUtils';
 import { getUniqueStaffNames } from '../utils/whatsappReceipt';
+import { lookupCustomerNameByPhone } from '../services/supabase';
 
 interface OrderSummaryTabProps {
   cartItems: CartItem[];
@@ -178,6 +179,81 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
       setClientName(detectedLoyaltyPass.clientName);
     }
   }, [detectedExistingMember, detectedLoyaltyPass, lastAutoDetectedPhone, clientName]);
+
+  // Customer Name Auto-Fill via Phone Number Lookup (300ms Debounce)
+  // Searches existing local sales history and Supabase public.orders table
+  useEffect(() => {
+    const rawPhone = clientPhone.trim();
+    if (!rawPhone) {
+      // If the input is cleared, leave Customer Name field empty (or as typed by user)
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      const cleanEntered = normalizeDigits(rawPhone);
+      if (!cleanEntered || cleanEntered.length < 5) return;
+
+      let foundName = '';
+
+      // 1. Search existing local sales history first
+      if (existingOrders && existingOrders.length > 0) {
+        for (const ord of existingOrders) {
+          const ordDigits = normalizeDigits(ord.clientPhone || '');
+          const ordName = (ord.clientName || '').trim();
+          const isPhoneMatch =
+            ordDigits === cleanEntered ||
+            (ordDigits.length >= 10 && cleanEntered.length >= 10 && ordDigits.slice(-10) === cleanEntered.slice(-10)) ||
+            ordDigits.endsWith(cleanEntered) ||
+            cleanEntered.endsWith(ordDigits);
+
+          if (
+            isPhoneMatch &&
+            ordName &&
+            ordName.toLowerCase() !== 'walk-in client' &&
+            ordName.toLowerCase() !== 'n/a'
+          ) {
+            foundName = ordName;
+            break;
+          }
+        }
+      }
+
+      // 2. Also search memberships if not yet found in orders
+      if (!foundName && memberships && memberships.length > 0) {
+        const mem = memberships.find((m) => {
+          const mDigits = normalizeDigits(m.clientPhone || '');
+          return (
+            mDigits === cleanEntered ||
+            (mDigits.length >= 10 && cleanEntered.length >= 10 && mDigits.slice(-10) === cleanEntered.slice(-10)) ||
+            mDigits.endsWith(cleanEntered) ||
+            cleanEntered.endsWith(mDigits)
+          );
+        });
+        if (mem?.clientName && mem.clientName.trim() && mem.clientName.toLowerCase() !== 'walk-in client') {
+          foundName = mem.clientName.trim();
+        }
+      }
+
+      // 3. Search Supabase public.orders table for any matching customer_phone
+      if (!foundName) {
+        try {
+          const cloudName = await lookupCustomerNameByPhone(cleanEntered);
+          if (cloudName && cloudName.trim()) {
+            foundName = cloudName.trim();
+          }
+        } catch (err) {
+          console.warn('Customer phone lookup error:', err);
+        }
+      }
+
+      // If a matching record with a known customer_name is found, automatically set Customer Name
+      if (foundName) {
+        setClientName(foundName);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [clientPhone, existingOrders, memberships]);
 
   // Helper: check if a cart item matches ANY eligible service on the active pass
   const isItemPassEligible = (item: CartItem): boolean => {
@@ -782,10 +858,12 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
           {/* Client Details */}
           <div className="space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Client Full Name</label>
+              <label htmlFor="customer_name" className="block text-xs font-semibold text-slate-700 mb-1">Client Full Name</label>
               <div className="relative">
                 <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
+                  id="customer_name"
+                  name="customer_name"
                   type="text"
                   placeholder="e.g. Aditya Mehta"
                   value={clientName}
@@ -796,10 +874,12 @@ export const OrderSummaryTab: React.FC<OrderSummaryTabProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Client Mobile Number</label>
+              <label htmlFor="customer_phone" className="block text-xs font-semibold text-slate-700 mb-1">Client Mobile Number</label>
               <div className="relative">
                 <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
+                  id="customer_phone"
+                  name="customer_phone"
                   type="tel"
                   placeholder="e.g. +91 98201 44521"
                   value={clientPhone}
