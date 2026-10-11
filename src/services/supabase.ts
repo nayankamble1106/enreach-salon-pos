@@ -159,10 +159,7 @@ export function saveSupabaseConfig(url: string, anonKey: string): void {
   }
 }
 
-// Automatically clear on module load in browser on preview render
-if (typeof window !== 'undefined') {
-  forceClearHistoryLocalStorage();
-}
+// Supabase client and config helpers ready
 
 export function getSupabaseClient(): SupabaseClient | null {
   if (cachedClient) return cachedClient;

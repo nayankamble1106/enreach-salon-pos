@@ -469,9 +469,23 @@ export default function App() {
     });
   };
 
-  // 1. Sales & Orders History: strictly default to empty arrays []
-  const [sales, setSales] = useState<Order[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  // 1. Sales & Orders History: initialize from cached backstage_orders or Firebase memory
+  const [sales, setSales] = useState<Order[]>(() => {
+    try {
+      const saved = safeGetItem('backstage_orders');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return sortOrdersDescending(parsed);
+        }
+      }
+      if (typeof window !== 'undefined' && window.__salonLastFirebaseOrders && window.__salonLastFirebaseOrders.length > 0) {
+        return sortOrdersDescending(window.__salonLastFirebaseOrders);
+      }
+    } catch {}
+    return [];
+  });
+  const [orders, setOrders] = useState<Order[]>(sales);
   const salesHistory = orders;
   const setSalesHistory = setOrders;
 
@@ -673,38 +687,9 @@ export default function App() {
     }
   }, [customCategories]);
 
-  // Initial startup execution: Force clear browser LocalStorage history keys and ensure preview state is 100% empty (0 Invoices, 0 Revenue)
+  // Initial startup execution: Load cloud data and sync real-time records across devices without wiping orders
   useEffect(() => {
-    forceClearHistoryLocalStorage();
-    runOneTimePermanentWipeoutSync();
-
-    setOrders([]);
-    setSales([]);
-    setCartItems([]);
-    setStaffMembers(INITIAL_STAFF_MEMBERS.map((s) => ({ ...s, totalSalesThisMonth: 0, history: [] })));
-    setStaffLogs([]);
-    setNumberLogs([]);
-    setNumberHistory([]);
-    setLastOrderId(0);
-    setCurrentInvoiceNumber(0);
-
-    // Execute ONE-TIME Supabase dummy data wipeout on launch
-    ensureSupabaseDummyPurgedOnce(true)
-      .then(({ purged }) => {
-        if (purged) {
-          setOrders([]);
-          setSales([]);
-          setCartItems([]);
-          setStaffLogs([]);
-          setNumberLogs([]);
-          setNumberHistory([]);
-          setLastOrderId(0);
-          setCurrentInvoiceNumber(0);
-        }
-      })
-      .catch((err) => {
-        console.warn('Initial Supabase purge error:', err);
-      });
+    loadCloudData();
   }, []);
 
   // Audio chime for luxury payment completion
