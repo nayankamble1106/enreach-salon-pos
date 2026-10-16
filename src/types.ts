@@ -1,4 +1,12 @@
-export type TabType = 'services' | 'cart' | 'history' | 'staff' | 'membership' | 'numbers';
+export type TabType = 'services' | 'cart' | 'history' | 'staff' | 'membership' | 'numbers' | 'expenses';
+
+export interface ExpenseItem {
+  id: string;
+  name: string;
+  amount: number;
+  date: string; // ISO string
+  createdAt: number;
+}
 
 export interface MembershipRecord {
   id: string;

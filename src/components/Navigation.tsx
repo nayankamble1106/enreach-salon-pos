@@ -1,5 +1,5 @@
 import React from 'react';
-import { Scissors, ShoppingBag, History, Users, Award, PhoneCall } from 'lucide-react';
+import { Scissors, ShoppingBag, History, Users, Award, PhoneCall, Receipt } from 'lucide-react';
 import { TabType } from '../types';
 
 interface NavigationProps {
@@ -39,6 +39,11 @@ export const Navigation: React.FC<NavigationProps> = ({
       id: 'history' as TabType,
       label: 'Sales History',
       icon: History,
+    },
+    {
+      id: 'expenses' as TabType,
+      label: 'Daily Expenses',
+      icon: Receipt,
     },
     {
       id: 'staff' as TabType,

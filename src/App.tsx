@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { TabType, CartItem, SalonService, Stylist, Order, SalonSettings, MembershipRecord, LoyaltyPass } from './types';
+import { TabType, CartItem, SalonService, Stylist, Order, SalonSettings, MembershipRecord, LoyaltyPass, ExpenseItem } from './types';
 import { SALON_SERVICES, STYLISTS, DEFAULT_SETTINGS } from './data/mockData';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
 import { ServicesTab } from './components/ServicesTab';
 import { OrderSummaryTab } from './components/OrderSummaryTab';
 import { SalesHistoryTab } from './components/SalesHistoryTab';
+import { ExpensesTab } from './components/ExpensesTab';
 import { MembershipTab } from './components/MembershipTab';
 import { NumberHistoryTab } from './components/NumberHistoryTab';
 import { StaffTab, StaffMember, StaffServiceRecord } from './components/StaffTab';
@@ -509,6 +510,52 @@ export default function App() {
 
   // Edit Services Mode (Shared with Members & Loyalty section for deletion access)
   const [isEditMode, setIsEditMode] = useState<boolean>(false);
+
+  // Daily Expenses State & Handlers
+  const [expenses, setExpenses] = useState<ExpenseItem[]>(() => {
+    try {
+      const saved = safeGetItem('enreach_daily_expenses');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // storage fallback
+    }
+    return [];
+  });
+
+  const handleAddExpenses = (newExpenses: Omit<ExpenseItem, 'id' | 'createdAt'>[]) => {
+    const created: ExpenseItem[] = newExpenses.map((exp) => ({
+      id: `exp-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      name: exp.name.trim(),
+      amount: exp.amount,
+      date: exp.date || new Date().toISOString(),
+      createdAt: Date.now(),
+    }));
+
+    setExpenses((prev) => {
+      const updated = [...created, ...prev];
+      safeSetItem('enreach_daily_expenses', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const handleUpdateExpense = (updatedExpense: ExpenseItem) => {
+    setExpenses((prev) => {
+      const updated = prev.map((exp) => (exp.id === updatedExpense.id ? updatedExpense : exp));
+      safeSetItem('enreach_daily_expenses', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const handleDeleteExpense = (expenseId: string) => {
+    setExpenses((prev) => {
+      const updated = prev.filter((exp) => exp.id !== expenseId);
+      safeSetItem('enreach_daily_expenses', JSON.stringify(updated));
+      return updated;
+    });
+  };
 
   // Multi-Device Real-time Firebase Synchronization Listeners
   useEffect(() => {
@@ -1465,6 +1512,18 @@ export default function App() {
               setIsHistoryUnlocked(false);
               setCurrentTab('services');
             }}
+          />
+        )}
+
+        {/* Daily Expenses Tab with Summary Timeframe Cards and Add Modal */}
+        {currentTab === 'expenses' && (
+          <ExpensesTab
+            expenses={expenses}
+            onAddExpenses={handleAddExpenses}
+            onUpdateExpense={handleUpdateExpense}
+            onDeleteExpense={handleDeleteExpense}
+            currencySymbol={settings.currencySymbol}
+            isEditMode={isEditMode}
           />
         )}
 
