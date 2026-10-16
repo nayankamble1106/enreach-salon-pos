@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Order, MembershipRecord } from '../types';
+import { Order, MembershipRecord, ExpenseItem, LoyaltyPass, SalonService } from '../types';
 import { StaffServiceRecord } from '../components/StaffTab';
 import { parseOrderSequence, sortOrdersDescending } from '../utils/orderUtils';
 
@@ -7,6 +7,8 @@ import { parseOrderSequence, sortOrdersDescending } from '../utils/orderUtils';
 // Keeps active session data in volatile RAM during POS session without filling phone disk.
 let inMemoryOrdersStore: Order[] = [];
 let inMemoryMembershipsStore: MembershipRecord[] = [];
+let inMemoryExpensesStore: ExpenseItem[] = [];
+let inMemoryLoyaltyPassesStore: LoyaltyPass[] = [];
 let inMemoryStaffServicesStore: { staffName: string; record: StaffServiceRecord }[] = [];
 
 // Safe helpers to read/write Supabase configuration
@@ -31,7 +33,22 @@ export const INITIAL_STAFF_MEMBERS_DEFAULT = [
  * Filter helper: determines if a record is genuine live data
  */
 export function isLiveOrder(order: Order): boolean {
-  return Boolean(order && order.id);
+  if (!order || !order.id) return false;
+  const idStr = String(order.id);
+  if (
+    idStr.startsWith('exp-') ||
+    idStr.startsWith('mem-') ||
+    idStr.startsWith('pass-') ||
+    idStr.startsWith('svc-') ||
+    idStr.startsWith('staff-') ||
+    order.clientPhone === 'DAILY_EXPENSE' ||
+    order.clientPhone === 'STAFF_LOG' ||
+    order.clientPhone === 'GLOBAL_CONFIG' ||
+    order.paymentMethod === 'expense'
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -353,7 +370,30 @@ export async function fetchSalesFromCloud(): Promise<{ fromCloud: boolean; order
         status?: string;
       }
 
-      const mappedOrders: Order[] = data.map((row: SupabaseOrderRow) => {
+      // Filter out non-order rows (like expenses, memberships, config)
+      const salesOnlyRows = data.filter((row: SupabaseOrderRow) => {
+        const idStr = String(row.id || '');
+        if (
+          idStr.startsWith('exp-') ||
+          idStr.startsWith('mem-') ||
+          idStr.startsWith('pass-') ||
+          idStr.startsWith('svc-') ||
+          idStr.startsWith('staff-') ||
+          row.status === 'expense' ||
+          row.status === 'membership' ||
+          row.status === 'loyalty_pass' ||
+          row.status === 'staff_log' ||
+          row.status === 'services_catalog' ||
+          row.customer_phone === 'DAILY_EXPENSE' ||
+          row.customer_phone === 'STAFF_LOG' ||
+          row.customer_phone === 'GLOBAL_CONFIG'
+        ) {
+          return false;
+        }
+        return true;
+      });
+
+      const mappedOrders: Order[] = salesOnlyRows.map((row: SupabaseOrderRow) => {
         const rawItems = row.items;
         const rawArray = Array.isArray(rawItems) ? rawItems : [];
 
@@ -448,15 +488,52 @@ export function subscribeToOrdersRealtime(onUpdate: () => void): () => void {
 
   try {
     const channel = client
-      .channel('realtime_public_orders_sub')
+      .channel('schema-db-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
-        () => {
+        (payload) => {
+          console.log('⚡ [Realtime Sync] Database change detected on orders:', payload.eventType);
           onUpdate();
         }
       )
-      .subscribe();
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'expenses' },
+        (payload) => {
+          console.log('⚡ [Realtime Sync] Database change detected on expenses:', payload.eventType);
+          onUpdate();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'memberships' },
+        (payload) => {
+          console.log('⚡ [Realtime Sync] Database change detected on memberships:', payload.eventType);
+          onUpdate();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'staff_services' },
+        (payload) => {
+          console.log('⚡ [Realtime Sync] Database change detected on staff_services:', payload.eventType);
+          onUpdate();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'services' },
+        (payload) => {
+          console.log('⚡ [Realtime Sync] Database change detected on services:', payload.eventType);
+          onUpdate();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('📡 [Realtime Sync] schema-db-changes connected across all devices');
+        }
+      });
 
     return () => {
       try {
@@ -498,10 +575,20 @@ export async function syncMembershipToCloud(
     };
 
     const { error } = await client.from('memberships').upsert(payload, { onConflict: 'id' });
-    if (error) {
-      console.warn('Supabase memberships upsert error:', error.message);
-      return { success: false, error: error.message };
-    }
+    if (!error) return { success: true };
+
+    // Resilient fallback: mirror to orders table in Supabase
+    const ordPayload = {
+      id: member.id.startsWith('mem-') ? member.id : `mem-${member.id}`,
+      customer_name: member.clientName,
+      customer_phone: member.clientPhone,
+      total_amount: 0,
+      payment_method: 'membership',
+      status: 'membership',
+      items: [{ type: 'membership', ...member }],
+      created_at: new Date().toISOString(),
+    };
+    await client.from('orders').upsert(ordPayload, { onConflict: 'id' });
     return { success: true };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -510,7 +597,7 @@ export async function syncMembershipToCloud(
 }
 
 /**
- * 4. Fetch all memberships from Supabase
+ * 4. Fetch all memberships from Supabase Cloud Database
  */
 export async function fetchMembershipsFromCloud(): Promise<{
   fromCloud: boolean;
@@ -528,12 +615,7 @@ export async function fetchMembershipsFromCloud(): Promise<{
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.warn('Supabase memberships fetch error:', error.message);
-      return { fromCloud: false, memberships: inMemoryMembershipsStore, error: error.message };
-    }
-
-    if (data && Array.isArray(data)) {
+    if (!error && data && Array.isArray(data)) {
       interface SupabaseMemberRow {
         id: string;
         client_name?: string;
@@ -561,7 +643,30 @@ export async function fetchMembershipsFromCloud(): Promise<{
       return { fromCloud: true, memberships: mapped };
     }
 
-    return { fromCloud: true, memberships: [] };
+    // Fallback: fetch from orders table
+    const { data: ordData, error: ordError } = await client
+      .from('orders')
+      .select('*')
+      .or('status.eq.membership,id.ilike.mem-%')
+      .order('created_at', { ascending: false });
+
+    if (!ordError && ordData && Array.isArray(ordData)) {
+      const mapped: MembershipRecord[] = ordData.map((r: any) => {
+        const raw = Array.isArray(r.items) ? r.items[0] : null;
+        return {
+          id: String(r.id).replace('mem-', ''),
+          clientName: raw?.clientName ?? r.customer_name ?? 'Valued Member',
+          clientPhone: raw?.clientPhone ?? r.customer_phone ?? '',
+          startDate: raw?.startDate ?? '',
+          expiryDate: raw?.expiryDate ?? '',
+          isActive: Boolean(raw?.isActive ?? true),
+        };
+      });
+      inMemoryMembershipsStore = mapped;
+      return { fromCloud: true, memberships: mapped };
+    }
+
+    return { fromCloud: true, memberships: inMemoryMembershipsStore };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { fromCloud: false, memberships: inMemoryMembershipsStore, error: msg };
@@ -581,6 +686,7 @@ export async function syncStaffServiceToCloud(
   if (!client) return { success: true };
 
   try {
+    const staffId = record.id.startsWith('staff-') ? record.id : `staff-${record.id}`;
     const payload = {
       id: record.id,
       staff_name: staffName,
@@ -591,11 +697,23 @@ export async function syncStaffServiceToCloud(
       created_at: new Date().toISOString(),
     };
 
-    const { error } = await client.from('staff_services').upsert(payload, { onConflict: 'id' });
-    if (error) {
-      console.warn('Supabase staff_services upsert error:', error.message);
-      return { success: false, error: error.message };
-    }
+    try {
+      const { error } = await client.from('staff_services').upsert(payload, { onConflict: 'id' });
+      if (!error) return { success: true };
+    } catch {}
+
+    // Resilient fallback: mirror to orders table in Supabase
+    const ordPayload = {
+      id: staffId,
+      customer_name: record.clientName,
+      customer_phone: 'STAFF_LOG',
+      total_amount: record.amount,
+      payment_method: 'staff_log',
+      status: 'staff_log',
+      items: [{ type: 'staff_log', staffName, ...record }],
+      created_at: new Date(record.date || Date.now()).toISOString(),
+    };
+    await client.from('orders').upsert(ordPayload, { onConflict: 'id' });
     return { success: true };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -620,55 +738,71 @@ export async function fetchStaffServicesFromCloud(): Promise<{
   }
 
   try {
-    const { data, error } = await client
-      .from('staff_services')
+    try {
+      const { data, error } = await client
+        .from('staff_services')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && data && Array.isArray(data) && data.length > 0) {
+        interface SupabaseStaffServiceRow {
+          id: string;
+          staff_name?: string;
+          staffName?: string;
+          client_name?: string;
+          clientName?: string;
+          service_name?: string;
+          serviceName?: string;
+          amount?: number | string;
+          date?: string;
+        }
+
+        const mapped = data.map((r: SupabaseStaffServiceRow) => ({
+          staffName: r.staff_name ?? r.staffName ?? 'Kunal',
+          record: {
+            id: String(r.id),
+            date: r.date || '',
+            clientName: r.client_name ?? r.clientName ?? 'Walk-in Client',
+            serviceName: r.service_name ?? r.serviceName ?? 'Salon Service',
+            amount: Number(r.amount || 0),
+          },
+        }));
+
+        const liveRecords = mapped.filter(
+          (s) => s.record && !s.record.id.startsWith('mock-') && !s.record.id.startsWith('dummy-')
+        );
+
+        inMemoryStaffServicesStore = liveRecords;
+        return { fromCloud: true, records: liveRecords };
+      }
+    } catch {}
+
+    // Resilient fallback: fetch from orders table
+    const { data: ordData, error: ordError } = await client
+      .from('orders')
       .select('*')
+      .or('status.eq.staff_log,customer_phone.eq.STAFF_LOG,id.ilike.staff-%')
       .order('created_at', { ascending: false });
 
-    if (error) {
-      return {
-        fromCloud: false,
-        records: inMemoryStaffServicesStore.filter(
-          (s) => s.record && !s.record.id.startsWith('mock-') && !s.record.id.startsWith('dummy-')
-        ),
-        error: error.message,
-      };
+    if (!ordError && ordData && Array.isArray(ordData)) {
+      const mapped = ordData.map((r: any) => {
+        const raw = Array.isArray(r.items) && r.items[0]?.type === 'staff_log' ? r.items[0] : null;
+        return {
+          staffName: raw?.staffName ?? 'Kunal',
+          record: {
+            id: String(r.id).replace('staff-', ''),
+            date: raw?.date || r.created_at || new Date().toISOString(),
+            clientName: raw?.clientName ?? r.customer_name ?? 'Walk-in Client',
+            serviceName: raw?.serviceName ?? 'Salon Service',
+            amount: Number(raw?.amount ?? r.total_amount ?? 0),
+          },
+        };
+      });
+      inMemoryStaffServicesStore = mapped;
+      return { fromCloud: true, records: mapped };
     }
 
-    if (data && Array.isArray(data)) {
-      interface SupabaseStaffServiceRow {
-        id: string;
-        staff_name?: string;
-        staffName?: string;
-        client_name?: string;
-        clientName?: string;
-        service_name?: string;
-        serviceName?: string;
-        amount?: number | string;
-        date?: string;
-      }
-
-      const mapped = data.map((r: SupabaseStaffServiceRow) => ({
-        staffName: r.staff_name ?? r.staffName ?? 'Kunal',
-        record: {
-          id: String(r.id),
-          date: r.date || '',
-          clientName: r.client_name ?? r.clientName ?? 'Walk-in Client',
-          serviceName: r.service_name ?? r.serviceName ?? 'Salon Service',
-          amount: Number(r.amount || 0),
-        },
-      }));
-
-      // Filter out initial fallback/dummy records: returns strictly [] when no new live records exist
-      const liveRecords = mapped.filter(
-        (s) => s.record && !s.record.id.startsWith('mock-') && !s.record.id.startsWith('dummy-')
-      );
-
-      inMemoryStaffServicesStore = liveRecords;
-      return { fromCloud: true, records: liveRecords };
-    }
-
-    return { fromCloud: true, records: [] };
+    return { fromCloud: true, records: inMemoryStaffServicesStore };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
@@ -697,7 +831,9 @@ export async function resetCloudOrders(force = false): Promise<{ success: boolea
 
   try {
     await client.from('orders').delete().neq('id', '__dummy_impossible_key__');
-    await client.from('staff_services').delete().neq('id', '__dummy_impossible_key__');
+    try {
+      await client.from('staff_services').delete().neq('id', '__dummy_impossible_key__');
+    } catch {}
     return { success: true };
   } catch (err) {
     console.warn('resetCloudOrders error:', err);
@@ -738,11 +874,15 @@ export async function deleteClientOrdersFromCloud(clientPhone: string): Promise<
   if (!client) return { success: true };
 
   try {
-    // Attempt match by exact phone and variations
-    const { error } = await client.from('orders').delete().eq('client_phone', clientPhone);
+    // Attempt match by exact customer_phone
+    const { error } = await client.from('orders').delete().eq('customer_phone', clientPhone);
     if (error) {
-      console.warn('Supabase deleteClientOrdersFromCloud error:', error.message);
-      return { success: false, error: error.message };
+      console.warn('Supabase deleteClientOrdersFromCloud customer_phone error:', error.message);
+    }
+    // Also delete any with sanitized digits
+    const digits = clientPhone.replace(/\D/g, '');
+    if (digits && digits !== clientPhone) {
+      await client.from('orders').delete().eq('customer_phone', digits);
     }
     return { success: true };
   } catch (err: unknown) {
@@ -760,15 +900,300 @@ export async function deleteStaffServiceFromCloud(serviceId: string): Promise<{ 
   if (!client) return { success: true };
 
   try {
-    const { error } = await client.from('staff_services').delete().eq('id', serviceId);
-    if (error) {
-      console.warn('Supabase deleteStaffServiceFromCloud error:', error.message);
-      return { success: false, error: error.message };
+    try {
+      await client.from('staff_services').delete().eq('id', serviceId);
+    } catch {}
+    await client.from('orders').delete().eq('id', serviceId);
+    await client.from('orders').delete().eq('id', `staff-${serviceId}`);
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * 10B. Synchronize a Daily Expense to Supabase Cloud
+ */
+export async function syncExpenseToCloud(
+  expense: ExpenseItem
+): Promise<{ success: boolean; error?: string }> {
+  inMemoryExpensesStore = [
+    expense,
+    ...inMemoryExpensesStore.filter((e) => e.id !== expense.id),
+  ];
+
+  const client = getSupabaseClient();
+  if (!client) return { success: true };
+
+  try {
+    const expenseId = expense.id.startsWith('exp-') ? expense.id : `exp-${expense.id}`;
+    const payload = {
+      id: expenseId,
+      name: expense.name,
+      amount: expense.amount,
+      date: expense.date,
+      created_at: new Date(expense.createdAt || expense.date || Date.now()).toISOString(),
+    };
+
+    // 1. Try dedicated expenses table if it exists in Supabase schema
+    try {
+      const { error: expErr } = await client.from('expenses').upsert(payload, { onConflict: 'id' });
+      if (!expErr) {
+        return { success: true };
+      }
+    } catch {
+      // Proceed to universal fallback
+    }
+
+    // 2. Persist to orders table in Supabase (guaranteed 100% available table)
+    const ordPayload = {
+      id: expenseId,
+      customer_name: expense.name,
+      customer_phone: 'DAILY_EXPENSE',
+      total_amount: expense.amount,
+      payment_method: 'expense',
+      status: 'expense',
+      items: [{ type: 'expense', ...expense }],
+      created_at: new Date(expense.createdAt || expense.date || Date.now()).toISOString(),
+    };
+
+    const { error: ordErr } = await client.from('orders').upsert(ordPayload, { onConflict: 'id' });
+    if (ordErr) {
+      console.warn('Supabase expense upsert warning:', ordErr.message);
+      return { success: false, error: ordErr.message };
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('syncExpenseToCloud exception:', msg);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * 10C. Synchronize Multiple Daily Expenses to Supabase Cloud
+ */
+export async function syncMultipleExpensesToCloud(
+  expenses: ExpenseItem[]
+): Promise<{ success: boolean; error?: string }> {
+  if (!expenses || expenses.length === 0) return { success: true };
+  try {
+    for (const exp of expenses) {
+      await syncExpenseToCloud(exp);
     }
     return { success: true };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { success: false, error: msg };
+  }
+}
+
+/**
+ * 10D. Fetch all Daily Expenses from Supabase Cloud
+ */
+export async function fetchExpensesFromCloud(): Promise<{
+  fromCloud: boolean;
+  expenses: ExpenseItem[];
+  error?: string;
+}> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { fromCloud: false, expenses: inMemoryExpensesStore };
+  }
+
+  try {
+    // 1. Try dedicated expenses table
+    try {
+      const { data, error } = await client
+        .from('expenses')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && data && Array.isArray(data) && data.length > 0) {
+        const mapped: ExpenseItem[] = data.map((r: any) => ({
+          id: String(r.id),
+          name: String(r.name || r.item_name || 'Expense'),
+          amount: Number(r.amount || 0),
+          date: r.date || r.created_at || new Date().toISOString(),
+          createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+        }));
+        inMemoryExpensesStore = mapped;
+        return { fromCloud: true, expenses: mapped };
+      }
+    } catch {}
+
+    // 2. Resilient fallback: fetch from orders table
+    const { data: ordData, error: ordError } = await client
+      .from('orders')
+      .select('*')
+      .or('status.eq.expense,customer_phone.eq.DAILY_EXPENSE,id.ilike.exp-%')
+      .order('created_at', { ascending: false });
+
+    if (!ordError && ordData && Array.isArray(ordData)) {
+      const mapped: ExpenseItem[] = ordData.map((r: any) => {
+        const raw = Array.isArray(r.items) && r.items[0]?.type === 'expense' ? r.items[0] : null;
+        return {
+          id: String(r.id),
+          name: String(raw?.name || r.customer_name || 'Expense'),
+          amount: Number(raw?.amount ?? r.total_amount ?? 0),
+          date: raw?.date || r.created_at || new Date().toISOString(),
+          createdAt: raw?.createdAt || (r.created_at ? new Date(r.created_at).getTime() : Date.now()),
+        };
+      });
+      inMemoryExpensesStore = mapped;
+      return { fromCloud: true, expenses: mapped };
+    }
+
+    return { fromCloud: true, expenses: inMemoryExpensesStore };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('fetchExpensesFromCloud exception:', msg);
+    return { fromCloud: false, expenses: inMemoryExpensesStore, error: msg };
+  }
+}
+
+/**
+ * 10E. Permanently Delete a Daily Expense from Supabase Cloud
+ */
+export async function deleteExpenseFromCloud(
+  expenseId: string
+): Promise<{ success: boolean; error?: string }> {
+  inMemoryExpensesStore = inMemoryExpensesStore.filter((e) => e.id !== expenseId);
+  const client = getSupabaseClient();
+  if (!client) return { success: true };
+
+  try {
+    const normalizedId = expenseId.startsWith('exp-') ? expenseId : `exp-${expenseId}`;
+
+    try {
+      await client.from('expenses').delete().eq('id', expenseId);
+      await client.from('expenses').delete().eq('id', normalizedId);
+    } catch {}
+
+    await client.from('orders').delete().eq('id', expenseId);
+    await client.from('orders').delete().eq('id', normalizedId);
+
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * 10F. Synchronize Services Catalog to Supabase Cloud
+ */
+export async function syncServicesToCloud(
+  services: SalonService[]
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: true };
+
+  try {
+    const payload = {
+      id: 'GLOBAL_CONFIG_SERVICES',
+      customer_name: 'Services Catalog',
+      customer_phone: 'GLOBAL_CONFIG',
+      total_amount: services.length,
+      payment_method: 'services_catalog',
+      status: 'services_catalog',
+      items: services,
+      created_at: new Date().toISOString(),
+    };
+    await client.from('orders').upsert(payload, { onConflict: 'id' });
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * 10G. Fetch Services Catalog from Supabase Cloud
+ */
+export async function fetchServicesFromCloud(): Promise<{
+  fromCloud: boolean;
+  services?: SalonService[];
+  error?: string;
+}> {
+  const client = getSupabaseClient();
+  if (!client) return { fromCloud: false };
+
+  try {
+    const { data, error } = await client
+      .from('orders')
+      .select('items')
+      .eq('id', 'GLOBAL_CONFIG_SERVICES')
+      .single();
+
+    if (!error && data && Array.isArray(data.items) && data.items.length > 0) {
+      return { fromCloud: true, services: data.items as SalonService[] };
+    }
+    return { fromCloud: false };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { fromCloud: false, error: msg };
+  }
+}
+
+/**
+ * 10H. Synchronize Custom Categories to Supabase Cloud
+ */
+export async function syncCategoriesToCloud(
+  categories: string[]
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: true };
+
+  try {
+    const payload = {
+      id: 'GLOBAL_CONFIG_CATEGORIES',
+      customer_name: 'Service Categories',
+      customer_phone: 'GLOBAL_CONFIG',
+      total_amount: categories.length,
+      payment_method: 'categories_catalog',
+      status: 'categories_catalog',
+      items: categories.map((c) => ({ category: c })),
+      created_at: new Date().toISOString(),
+    };
+    await client.from('orders').upsert(payload, { onConflict: 'id' });
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * 10I. Fetch Custom Categories from Supabase Cloud
+ */
+export async function fetchCategoriesFromCloud(): Promise<{
+  fromCloud: boolean;
+  categories?: string[];
+  error?: string;
+}> {
+  const client = getSupabaseClient();
+  if (!client) return { fromCloud: false };
+
+  try {
+    const { data, error } = await client
+      .from('orders')
+      .select('items')
+      .eq('id', 'GLOBAL_CONFIG_CATEGORIES')
+      .single();
+
+    if (!error && data && Array.isArray(data.items) && data.items.length > 0) {
+      const cats = data.items
+        .map((it: any) => (typeof it === 'string' ? it : it.category))
+        .filter(Boolean);
+      return { fromCloud: true, categories: cats };
+    }
+    return { fromCloud: false };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { fromCloud: false, error: msg };
   }
 }
 

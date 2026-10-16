@@ -21,6 +21,7 @@ import {
   syncMembershipToCloud,
   fetchMembershipsFromCloud,
   syncStaffServiceToCloud,
+  fetchStaffServicesFromCloud,
   resetCloudOrders,
   isSupabaseConfigured,
   subscribeToOrdersRealtime,
@@ -30,6 +31,14 @@ import {
   deleteStaffServiceFromCloud,
   forceClearHistoryLocalStorage,
   isLiveOrder,
+  syncExpenseToCloud,
+  syncMultipleExpensesToCloud,
+  fetchExpensesFromCloud,
+  deleteExpenseFromCloud,
+  syncServicesToCloud,
+  fetchServicesFromCloud,
+  syncCategoriesToCloud,
+  fetchCategoriesFromCloud,
 } from './services/supabase';
 import { getNextOrderNumber, sortOrdersDescending, migrateOrdersToSequential } from './utils/orderUtils';
 import { formatIndianDate } from './utils/dateUtils';
@@ -195,11 +204,12 @@ export default function App() {
     return [];
   });
 
-  // Service Manager CRUD Handlers with Instant Multi-Device Firebase RTDB Sync
+  // Service Manager CRUD Handlers with Instant Multi-Device Cloud Sync
   const handleAddService = (newService: SalonService) => {
     setServices((prev) => {
       const updated = [...prev, newService];
       safeSetItem('backstage_services', JSON.stringify(updated));
+      syncServicesToCloud(updated).catch(() => {});
       return updated;
     });
     if (typeof window !== 'undefined' && window.salonFirebase) {
@@ -211,6 +221,7 @@ export default function App() {
     setServices((prev) => {
       const updated = prev.map((s) => (s.id === updatedService.id ? updatedService : s));
       safeSetItem('backstage_services', JSON.stringify(updated));
+      syncServicesToCloud(updated).catch(() => {});
       return updated;
     });
     if (typeof window !== 'undefined' && window.salonFirebase) {
@@ -222,6 +233,7 @@ export default function App() {
     setServices((prev) => {
       const updated = prev.filter((s) => s.id !== serviceId);
       safeSetItem('backstage_services', JSON.stringify(updated));
+      syncServicesToCloud(updated).catch(() => {});
       return updated;
     });
     // Remove from cart if item is currently in cart
@@ -236,6 +248,7 @@ export default function App() {
       if (prev.includes(categoryName)) return prev;
       const updated = [...prev, categoryName];
       safeSetItem('backstage_service_categories', JSON.stringify(updated));
+      syncCategoriesToCloud(updated).catch(() => {});
       if (typeof window !== 'undefined' && window.salonFirebase?.syncCategories) {
         window.salonFirebase.syncCategories(updated);
       }
@@ -337,9 +350,13 @@ export default function App() {
 
       // 2. Fetch from cloud storage mirror ONLY if Supabase is configured
       if (isSupabaseConfigured()) {
-        const [salesRes, memberRes] = await Promise.all([
+        const [salesRes, memberRes, expensesRes, staffRes, servicesRes, catsRes] = await Promise.all([
           fetchSalesFromCloud(),
           fetchMembershipsFromCloud(),
+          fetchExpensesFromCloud(),
+          fetchStaffServicesFromCloud(),
+          fetchServicesFromCloud(),
+          fetchCategoriesFromCloud(),
         ]);
 
         if (salesRes.orders && salesRes.orders.length > 0) {
@@ -364,10 +381,73 @@ export default function App() {
           setMemberships((prev) => {
             const merged = [...prev];
             memberRes.memberships.forEach((cm) => {
-              if (!merged.some((m) => m.id === cm.id || m.clientPhone === cm.clientPhone)) {
+              if (!merged.some((m) => m.id === cm.id || (cm.clientPhone && m.clientPhone === cm.clientPhone))) {
                 merged.push(cm);
               }
             });
+            safeSetItem('backstage_memberships', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        if (expensesRes.expenses && expensesRes.expenses.length > 0) {
+          setExpenses((prev) => {
+            const merged = [...prev];
+            expensesRes.expenses.forEach((ce) => {
+              const idx = merged.findIndex((m) => m.id === ce.id);
+              if (idx >= 0) {
+                merged[idx] = ce;
+              } else {
+                merged.push(ce);
+              }
+            });
+            merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            safeSetItem('enreach_daily_expenses', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        if (staffRes.records && staffRes.records.length > 0) {
+          setStaffMembers((prev) => {
+            const updated = prev.map((s) => {
+              const matched = staffRes.records.filter(
+                (r) => r.staffName.toLowerCase() === s.name.toLowerCase()
+              );
+              if (matched.length === 0) return s;
+              const mergedHistory = [...(s.history || [])];
+              matched.forEach((m) => {
+                if (!mergedHistory.some((h) => h.id === m.record.id)) {
+                  mergedHistory.push(m.record);
+                }
+              });
+              const totalSales = mergedHistory.reduce((sum, h) => sum + (h.amount || 0), 0);
+              return { ...s, history: mergedHistory, totalSalesThisMonth: totalSales };
+            });
+            safeSetItem('backstage_staff_performance', JSON.stringify(updated));
+            return updated;
+          });
+        }
+
+        if (servicesRes.services && servicesRes.services.length > 0) {
+          setServices((prev) => {
+            const merged = [...prev];
+            servicesRes.services!.forEach((cs) => {
+              const idx = merged.findIndex((m) => m.id === cs.id);
+              if (idx >= 0) {
+                merged[idx] = cs;
+              } else {
+                merged.push(cs);
+              }
+            });
+            safeSetItem('backstage_services', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        if (catsRes.categories && catsRes.categories.length > 0) {
+          setCustomCategories((prev) => {
+            const merged = Array.from(new Set([...prev, ...catsRes.categories!]));
+            safeSetItem('backstage_service_categories', JSON.stringify(merged));
             return merged;
           });
         }
@@ -539,6 +619,11 @@ export default function App() {
       safeSetItem('enreach_daily_expenses', JSON.stringify(updated));
       return updated;
     });
+
+    // Instant Multi-Device Push to Supabase Cloud
+    syncMultipleExpensesToCloud(created).catch((err) => {
+      console.warn('Cloud sync expenses error:', err);
+    });
   };
 
   const handleUpdateExpense = (updatedExpense: ExpenseItem) => {
@@ -547,6 +632,11 @@ export default function App() {
       safeSetItem('enreach_daily_expenses', JSON.stringify(updated));
       return updated;
     });
+
+    // Instant Multi-Device Push to Supabase Cloud
+    syncExpenseToCloud(updatedExpense).catch((err) => {
+      console.warn('Cloud sync expense error:', err);
+    });
   };
 
   const handleDeleteExpense = (expenseId: string) => {
@@ -554,6 +644,11 @@ export default function App() {
       const updated = prev.filter((exp) => exp.id !== expenseId);
       safeSetItem('enreach_daily_expenses', JSON.stringify(updated));
       return updated;
+    });
+
+    // Instant Multi-Device Delete from Supabase Cloud
+    deleteExpenseFromCloud(expenseId).catch((err) => {
+      console.warn('Cloud delete expense error:', err);
     });
   };
 
